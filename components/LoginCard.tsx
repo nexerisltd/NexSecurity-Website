@@ -1,0 +1,99 @@
+'use client';
+
+import { useState } from 'react';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+
+export function LoginCard({ accessDenied }: { accessDenied: boolean }) {
+  const [loading, setLoading] = useState(false);
+
+  async function handleSignIn() {
+    setLoading(true);
+    const supabase = createSupabaseBrowserClient();
+    await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+        queryParams: { prompt: 'select_account' },
+      },
+    });
+  }
+
+  return (
+    <div className="relative w-full max-w-sm">
+      <div className="relative overflow-hidden rounded-2xl border border-vault-border bg-vault-900 shadow-glow">
+        {/* signature element: a scanning "keycard" strip */}
+        <div className="relative h-24 overflow-hidden border-b border-vault-border bg-vault-800 bg-scanlines">
+          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-signal-glow to-transparent animate-scan" />
+          <div className="flex h-full items-center justify-between px-6">
+            <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
+              NexSecurity
+            </span>
+            <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink-faint">
+              Vault-01
+            </span>
+          </div>
+        </div>
+
+        <div className="px-8 py-8 text-center">
+          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
+            Private Learning Space
+          </p>
+          <h1 className="mt-3 font-display text-2xl font-semibold text-ink">
+            Authorized members only
+          </h1>
+          <p className="mt-2 text-sm leading-relaxed text-ink-dim">
+            Sign in with the Google account your administrator has granted access to.
+          </p>
+
+          {accessDenied && (
+            <div className="mt-5 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-left">
+              <p className="font-mono text-[11px] uppercase tracking-widest text-danger">
+                Access denied
+              </p>
+              <p className="mt-1 text-xs text-ink-dim">
+                This account isn&apos;t authorized. Contact your administrator if you
+                believe this is a mistake.
+              </p>
+            </div>
+          )}
+
+          <button
+            onClick={handleSignIn}
+            disabled={loading}
+            className="mt-6 flex w-full items-center justify-center gap-3 rounded-lg bg-ink px-5 py-3 text-sm font-medium text-vault-950 transition hover:bg-white disabled:opacity-60"
+          >
+            <GoogleMark />
+            {loading ? 'Redirecting…' : 'Continue with Google'}
+          </button>
+
+          <p className="mt-5 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+            Session verified server-side · No public content
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GoogleMark() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 18 18" aria-hidden="true">
+      <path
+        fill="#4285F4"
+        d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"
+      />
+      <path
+        fill="#34A853"
+        d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.85.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.05l3.01-2.33z"
+      />
+      <path
+        fill="#EA4335"
+        d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"
+      />
+    </svg>
+  );
+}
