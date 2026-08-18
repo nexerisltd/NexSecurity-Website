@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # NexSecurity
 
 A private learning platform. Nothing is visible to anyone who isn't on the
@@ -264,3 +265,6 @@ which resource, when.
   schema already has a `provider` column for this.
 - **Browser playback cannot stop screen recording** — documented, not
   solvable, by design scoped to preventing account/link-level leakage.
+=======
+"# NexSecurity-Website build with security" 
+>>>>>>> 6b68ffd6b3f15c79f0903f3c67b060a78e06cc22
