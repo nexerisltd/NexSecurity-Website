@@ -8,7 +8,6 @@ import { logAuditEvent } from '@/lib/audit';
 
 export const dynamic = 'force-dynamic';
 
-const SIGNED_URL_TTL_SECONDS = 60 * 20; // 20 minutes — long enough to watch, short enough to limit sharing value
 const BUNNY_TOKEN_TTL_SECONDS = 60 * 10; // Bunny recommends short-lived tokens; 10 min is plenty per viewing session
 
 /**
@@ -69,54 +68,34 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
   }
 
-  let url: string;
-  let expiresAt: string;
-  let type: 'iframe' | 'video';
-
-  if (video.provider === 'bunny') {
-    const [libraryId, bunnyVideoId] = video.source_ref.split('/');
-    if (!libraryId || !bunnyVideoId) {
-      await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, {
-        reason: 'malformed_source_ref',
-      });
-      return NextResponse.json({ error: 'This video is not currently playable.' }, { status: 500 });
-    }
-
-    try {
-      const signed = buildBunnyEmbedUrl(libraryId, bunnyVideoId);
-      url = signed.url;
-      expiresAt = signed.expiresAt;
-      type = 'iframe';
-    } catch (err) {
-      console.error('[video/play] bunny token error', err);
-      await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, {
-        reason: 'bunny_config_missing',
-      });
-      return NextResponse.json({ error: 'Could not start playback.' }, { status: 500 });
-    }
-  } else if (video.provider === 'supabase_storage') {
-    const { data: signed, error: signError } = await adminClient.storage
-      .from('videos')
-      .createSignedUrl(video.source_ref, SIGNED_URL_TTL_SECONDS);
-
-    if (signError || !signed) {
-      await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, {
-        reason: 'sign_failed',
-      });
-      return NextResponse.json({ error: 'Could not start playback.' }, { status: 500 });
-    }
-
-    url = signed.signedUrl;
-    expiresAt = new Date(Date.now() + SIGNED_URL_TTL_SECONDS * 1000).toISOString();
-    type = 'video';
-  } else {
-    // Placeholder for other providers (Mux, Cloudflare Stream, etc.):
-    // call that provider's signed-playback-token API here instead, using
-    // its server-side secret. Never expose that secret to the client.
+  if (video.provider !== 'bunny') {
     await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, {
       reason: 'unsupported_provider',
     });
     return NextResponse.json({ error: 'This video is not currently playable.' }, { status: 500 });
+  }
+
+  const [libraryId, bunnyVideoId] = video.source_ref.split('/');
+  if (!libraryId || !bunnyVideoId) {
+    await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, {
+      reason: 'malformed_source_ref',
+    });
+    return NextResponse.json({ error: 'This video is not currently playable.' }, { status: 500 });
+  }
+
+  let url: string;
+  let expiresAt: string;
+
+  try {
+    const signed = buildBunnyEmbedUrl(libraryId, bunnyVideoId);
+    url = signed.url;
+    expiresAt = signed.expiresAt;
+  } catch (err) {
+    console.error('[video/play] bunny token error', err);
+    await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, {
+      reason: 'bunny_config_missing',
+    });
+    return NextResponse.json({ error: 'Could not start playback.' }, { status: 500 });
   }
 
   await adminClient.from('video_playback_tokens').insert({
@@ -127,5 +106,5 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
   await logAuditEvent('VIDEO_ACCESS_GRANTED', auth.user.email, videoId);
 
-  return NextResponse.json({ url, expiresAt, type });
+  return NextResponse.json({ url, expiresAt });
 }

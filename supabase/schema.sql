@@ -80,9 +80,11 @@ create table if not exists public.videos (
   title text not null,
   description text,
   thumbnail_url text,
-  -- provider-specific private reference (e.g. Mux playback ID, Supabase
-  -- Storage object path, etc.) — never sent directly to the client.
-  provider text not null default 'supabase_storage',
+  -- always 'bunny' — this app only integrates with Bunny Stream (see
+  -- app/api/video/[id]/play/route.ts)
+  provider text not null default 'bunny',
+  -- "{libraryId}/{videoGuid}" from the Bunny embed URL — never exposed
+  -- to the client; only used server-side to build a signed embed token.
   source_ref text not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

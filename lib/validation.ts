@@ -47,10 +47,10 @@ export const videoSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(2000).optional().nullable(),
   thumbnail_url: safeUrl.optional().nullable(),
-  provider: z
-    .enum(['bunny', 'supabase_storage', 'mux', 'cloudflare_stream'])
-    .default('bunny'),
-  // For provider 'bunny': "{libraryId}/{videoGuid}" — e.g.
+  // Bunny Stream is the only supported provider — one less thing to get
+  // wrong when attaching a class, and one less code path to secure.
+  provider: z.literal('bunny').default('bunny'),
+  // "{libraryId}/{videoGuid}" — e.g.
   // "503487/df2a65b4-d422-4c13-9327-44081b6f5f4f", taken straight out of
   // the embed URL https://iframe.mediadelivery.net/embed/{libraryId}/{videoGuid}
   source_ref: z.string().trim().min(1).max(2048),

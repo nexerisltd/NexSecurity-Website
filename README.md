@@ -28,15 +28,12 @@ anything that decides access.
    `https://nexsecurity.vercel.app` and add
    `https://nexsecurity.vercel.app/auth/callback` (and your local dev URL,
    e.g. `http://localhost:3000/auth/callback`) to Redirect URLs.
-4. **Storage — `videos` bucket** (only needed if you use the
-   `supabase_storage` provider instead of Bunny): create a **private**
-   bucket named `videos`. Do not make it public.
-5. **Storage — `thumbnails` bucket** (used by the admin panel's upload
+4. **Storage — `thumbnails` bucket** (used by the admin panel's upload
    button for board/class thumbnails): create a bucket named
    `thumbnails` and toggle **Public bucket** on when creating it. This is
    deliberately public — thumbnails are preview images, not protected
-   content — unlike the video bucket above, which must stay private.
-6. Add yourself as the first admin:
+   content.
+5. Add yourself as the first admin:
    ```sql
    insert into public.authorized_users (email, role, status)
    values ('you@example.com', 'ADMIN', 'ACTIVE');
@@ -286,10 +283,12 @@ which resource, when.
   yet have a dedicated admin UI — today, building a Page and its
   `page_boards` links is done via the Supabase table editor. Say the word
   and this form can be built next.
-- **Video provider**: defaults to Bunny Stream (signed embed tokens). A
-  `supabase_storage` path (direct file, signed URL) also exists for
-  self-hosted files. If you move to Mux/Cloudflare Stream, add a branch
-  in `/api/video/[id]/play/route.ts` next to the existing two — the
-  schema's `provider` column already supports this.
+### 2.6 Video provider
+
+- **Video provider**: Bunny Stream only — this is intentional, not a
+  placeholder. One provider, one code path (`app/api/video/[id]/play/route.ts`),
+  fewer ways for a mistake to slip through. If you ever need a second
+  provider, add a new branch there rather than reintroducing a generic
+  "provider" abstraction.
 - **Browser playback cannot stop screen recording** — documented, not
   solvable, by design scoped to preventing account/link-level leakage.
