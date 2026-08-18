@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ThumbnailUpload } from '@/components/ThumbnailUpload';
 
 type Board = {
   id: string;
@@ -118,14 +119,11 @@ export default function AdminBoardsPage() {
             ))}
           </select>
         </Field>
-        <Field label="Thumbnail URL (https)">
-          <input
-            value={thumbnailUrl}
-            onChange={(e) => setThumbnailUrl(e.target.value)}
-            placeholder="https://…"
-            className="input"
-          />
-        </Field>
+        <div className="sm:col-span-2">
+          <Field label="Thumbnail">
+            <ThumbnailUpload value={thumbnailUrl} onChange={setThumbnailUrl} />
+          </Field>
+        </div>
         <Field label="Description">
           <input
             value={description}

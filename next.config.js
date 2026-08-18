@@ -1,7 +1,8 @@
 /** @type {import('next').NextConfig} */
 
-// NOTE: adjust media-src / frame-src if you switch video providers
-// (e.g. add https://*.mux.com, https://*.cloudflarestream.com).
+// Bunny Stream embeds run in an iframe from iframe.mediadelivery.net, so
+// that origin needs an explicit frame-src allowance. If you switch video
+// providers later, swap this for the new provider's embed domain instead.
 const ContentSecurityPolicy = `
   default-src 'self';
   script-src 'self' 'unsafe-inline';
@@ -10,7 +11,7 @@ const ContentSecurityPolicy = `
   font-src 'self' data:;
   connect-src 'self' https://*.supabase.co wss://*.supabase.co;
   media-src 'self' https://*.supabase.co blob:;
-  frame-src 'self';
+  frame-src 'self' https://iframe.mediadelivery.net;
   frame-ancestors 'none';
   base-uri 'self';
   form-action 'self';

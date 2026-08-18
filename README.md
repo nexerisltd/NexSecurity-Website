@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # NexSecurity
 
 A private learning platform. Nothing is visible to anyone who isn't on the
@@ -29,16 +28,44 @@ anything that decides access.
    `https://nexsecurity.vercel.app` and add
    `https://nexsecurity.vercel.app/auth/callback` (and your local dev URL,
    e.g. `http://localhost:3000/auth/callback`) to Redirect URLs.
-4. **Storage**: create a **private** bucket named `videos`. Do not make it
-   public. Upload video files here; each video's `source_ref` in the
-   `videos` table is the object path inside this bucket.
-5. Add yourself as the first admin:
+4. **Storage — `videos` bucket** (only needed if you use the
+   `supabase_storage` provider instead of Bunny): create a **private**
+   bucket named `videos`. Do not make it public.
+5. **Storage — `thumbnails` bucket** (used by the admin panel's upload
+   button for board/class thumbnails): create a bucket named
+   `thumbnails` and toggle **Public bucket** on when creating it. This is
+   deliberately public — thumbnails are preview images, not protected
+   content — unlike the video bucket above, which must stay private.
+6. Add yourself as the first admin:
    ```sql
    insert into public.authorized_users (email, role, status)
    values ('you@example.com', 'ADMIN', 'ACTIVE');
    ```
 
-### 1.2 Google Cloud Console
+### 1.2 Bunny Stream (video/"class" playback)
+
+Classes are added in `/admin/videos` by pasting a Bunny embed URL like
+`https://iframe.mediadelivery.net/embed/503487/df2a65b4-…`. To make those
+signed and locked to your domain instead of playable by anyone who has
+the link:
+
+1. In the Bunny dashboard, open your **Stream Library → Security**.
+2. Turn on **Token Authentication** and copy the **Authentication Key**.
+   Set it as `BUNNY_STREAM_TOKEN_KEY` in your env vars (server-side only —
+   never `NEXT_PUBLIC_`).
+3. Under the same Security section, set **Allowed Referrers** to your
+   domain (`nexsecurity.vercel.app`, plus `localhost` for local dev). This
+   is what actually stops a copied signed link from playing on someone
+   else's site — the token alone only proves it hasn't expired yet.
+
+**Honest limitation:** a browser always exposes an iframe's `src` in
+DevTools — that's how browsers work, and no configuration changes it.
+What token auth + referrer restriction actually buys you is that a copied
+link (a) stops working after ~10 minutes and (b) won't play embedded
+anywhere but your domain even before it expires. That's the realistic
+ceiling for browser-based embed protection.
+
+### 1.3 Google Cloud Console
 
 In your OAuth client's **Authorized redirect URIs**, add your Supabase
 callback URL (found on the Supabase Google provider settings page — it
@@ -50,13 +77,13 @@ forwards to your app.
 anywhere outside the Google Cloud Console / Supabase dashboard (chat, a
 ticket, a doc, etc.) — treat any such exposure as a live leak.
 
-### 1.3 Environment variables
+### 1.4 Environment variables
 
 Copy `.env.example` to `.env.local` for development, and set the same
 keys in Vercel's Project Settings → Environment Variables for production.
 `SUPABASE_SERVICE_ROLE_KEY` must **never** get a `NEXT_PUBLIC_` prefix.
 
-### 1.4 Run
+### 1.5 Run
 
 ```bash
 npm install
@@ -252,19 +279,17 @@ which resource, when.
 
 - **Rate limiting is in-memory** — replace with Upstash Redis for real
   multi-instance production traffic (see `lib/rateLimit.ts`).
-- **Admin UI covers Users and Boards CRUD** (create/publish/delete). The
-  Pages and Videos data model is fully defined and RLS-protected in
-  `supabase/schema.sql`, but the dedicated Pages editor and Video
-  add/replace UI in `/admin` are the natural next slice to build — today,
-  attaching a video to a leaf board or building a Page is done via direct
-  SQL/table editor in Supabase. Say the word and these forms can be built
-  next.
-- **Video provider**: wired for Supabase Storage private buckets with
-  signed URLs. If you later move to Mux/Cloudflare Stream for adaptive
-  bitrate, swap the branch in `/api/video/[id]/play/route.ts` — the
-  schema already has a `provider` column for this.
+- **Admin UI covers Users, Boards, and Classes (videos)** — create,
+  publish/unpublish, upload thumbnails, attach/remove classes. The
+  **Pages** editor (the "Board → Page → Board" intermediate layer) is
+  fully defined and RLS-protected in `supabase/schema.sql` but doesn't
+  yet have a dedicated admin UI — today, building a Page and its
+  `page_boards` links is done via the Supabase table editor. Say the word
+  and this form can be built next.
+- **Video provider**: defaults to Bunny Stream (signed embed tokens). A
+  `supabase_storage` path (direct file, signed URL) also exists for
+  self-hosted files. If you move to Mux/Cloudflare Stream, add a branch
+  in `/api/video/[id]/play/route.ts` next to the existing two — the
+  schema's `provider` column already supports this.
 - **Browser playback cannot stop screen recording** — documented, not
   solvable, by design scoped to preventing account/link-level leakage.
-=======
-"# NexSecurity-Website build with security" 
->>>>>>> 6b68ffd6b3f15c79f0903f3c67b060a78e06cc22

@@ -47,8 +47,17 @@ export const videoSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(2000).optional().nullable(),
   thumbnail_url: safeUrl.optional().nullable(),
-  provider: z.enum(['supabase_storage', 'mux', 'cloudflare_stream']).default('supabase_storage'),
+  provider: z
+    .enum(['bunny', 'supabase_storage', 'mux', 'cloudflare_stream'])
+    .default('bunny'),
+  // For provider 'bunny': "{libraryId}/{videoGuid}" — e.g.
+  // "503487/df2a65b4-d422-4c13-9327-44081b6f5f4f", taken straight out of
+  // the embed URL https://iframe.mediadelivery.net/embed/{libraryId}/{videoGuid}
   source_ref: z.string().trim().min(1).max(2048),
+});
+
+export const videoUpdateSchema = videoSchema.partial().extend({
+  board_id: z.string().uuid().optional(),
 });
 
 export const uuidSchema = z.string().uuid();
