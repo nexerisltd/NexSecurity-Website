@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { randomUUID } from 'crypto';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { checkRateLimit } from '@/lib/rateLimit';
@@ -37,14 +38,23 @@ export async function POST(request: NextRequest) {
 
   const adminClient = createSupabaseAdminClient();
   const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-  const path = `${crypto.randomUUID()}.${ext}`;
+  const path = `${randomUUID()}.${ext}`;
 
   const { error: uploadError } = await adminClient.storage
     .from('thumbnails')
     .upload(path, file, { contentType: file.type, upsert: false });
 
   if (uploadError) {
-    return NextResponse.json({ error: 'Upload failed.' }, { status: 500 });
+    console.error('[admin/upload] storage upload failed', uploadError);
+    // This response only ever reaches an already-authenticated admin
+    // (requireAdmin() above), so surfacing the real reason is safe and
+    // saves a round trip to the server logs. The two most common causes:
+    // the "thumbnails" bucket doesn't exist yet, or it exists but isn't
+    // marked Public in Supabase Storage settings.
+    return NextResponse.json(
+      { error: `Upload failed: ${uploadError.message}` },
+      { status: 500 }
+    );
   }
 
   const { data: publicUrl } = adminClient.storage.from('thumbnails').getPublicUrl(path);
