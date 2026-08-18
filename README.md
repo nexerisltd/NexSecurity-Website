@@ -87,6 +87,23 @@ Deploy: push to GitHub, import into Vercel, set the env vars, deploy.
 
 ## 2. Architecture
 
+### 2.0 Public vs. private surface
+
+By request, `/` is now a **public marketing/landing page** (original copy,
+no login required) — think of it as the "storefront." Everything that
+matters is still fully private:
+
+- `/learn`, `/learn/board/:id`, `/learn/video/:id`, `/admin`, and every
+  `/api/*` route are unchanged — still gated by `getAuth()` /
+  `requireAuthorized()` / `requireAdmin()` exactly as before.
+- `middleware.ts` now treats `/` as public alongside `/login` and the
+  auth callback routes — this is still just a UX redirect layer, not a
+  security boundary; the real enforcement is server-side per route as
+  described below.
+- The landing page's copy, stats, and reviews are placeholders — swap
+  `STATS`, `PATHS`, and `REVIEWS` in `app/page.tsx` for real numbers and
+  real member reviews once you have them.
+
 ```
 Google OAuth (via Supabase Auth)
         |

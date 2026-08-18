@@ -9,6 +9,7 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
   const isPublic =
+    pathname === '/' || // public marketing landing page
     PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/')) ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon');
