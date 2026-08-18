@@ -42,25 +42,19 @@ anything that decides access.
 ### 1.2 Bunny Stream (video/"class" playback)
 
 Classes are added in `/admin/videos` by pasting a Bunny embed URL like
-`https://iframe.mediadelivery.net/embed/503487/df2a65b4-…`. To make those
-signed and locked to your domain instead of playable by anyone who has
-the link:
+`https://iframe.mediadelivery.net/embed/503487/df2a65b4-…`. No extra Bunny
+dashboard configuration is required — the app plays the embed directly.
 
-1. In the Bunny dashboard, open your **Stream Library → Security**.
-2. Turn on **Token Authentication** and copy the **Authentication Key**.
-   Set it as `BUNNY_STREAM_TOKEN_KEY` in your env vars (server-side only —
-   never `NEXT_PUBLIC_`).
-3. Under the same Security section, set **Allowed Referrers** to your
-   domain (`nexsecurity.vercel.app`, plus `localhost` for local dev). This
-   is what actually stops a copied signed link from playing on someone
-   else's site — the token alone only proves it hasn't expired yet.
-
-**Honest limitation:** a browser always exposes an iframe's `src` in
-DevTools — that's how browsers work, and no configuration changes it.
-What token auth + referrer restriction actually buys you is that a copied
-link (a) stops working after ~10 minutes and (b) won't play embedded
-anywhere but your domain even before it expires. That's the realistic
-ceiling for browser-based embed protection.
+**What this does and doesn't protect:** the video page itself is fully
+gated by the app's normal login/authorization check — an unauthenticated
+or non-allowlisted user can never reach `/learn/video/:id` or get a
+playback URL from the API at all. What it does *not* do is stop an
+already-authorized member from copying the embed URL out of DevTools and
+sharing it — that copied link would keep working indefinitely, since
+there's no expiry or domain restriction on it. If that matters later,
+Bunny's Token Authentication + Allowed Referrers (in Stream Library →
+Security) can be added back to `app/api/video/[id]/play/route.ts` to
+close that gap — just say the word.
 
 ### 1.3 Google Cloud Console
 
@@ -156,24 +150,28 @@ Server Component checks auth, fetches METADATA ONLY (title/description)
         |
 Client <VideoPlayer> mounts, POSTs to /api/video/:id/play
         |
-Route re-checks auth + rate limit + board-published, then asks Supabase
-Storage for a signed URL (20 min expiry) to the private `videos` bucket
+Route re-checks auth + rate limit + board-published, then builds the
+plain Bunny embed URL from the stored library/video id
         |
-<video> element plays the signed URL
+<iframe> plays the embed URL
 ```
 
-The raw storage path (`source_ref`) is never sent to the client — not in
-the board list, not in page source, not in any API response except as an
-already-consumed input to `createSignedUrl()`. A copied signed URL stops
-working after 20 minutes and was only ever issued to one authorized,
-rate-limited user, so it doesn't function as a durable "share this link"
-credential the way a permanent public URL would.
+The raw `source_ref` is never sent to the client directly — not in the
+board list, not in page source — it's only ever read server-side to
+construct the embed URL, which is then returned in the `/play` response
+right before the iframe mounts.
 
-**Documented limitation:** this prevents *unauthorized account access*
-and *casual permanent-link sharing*. It cannot prevent an authorized user
-from screen-recording, screenshotting, or using devtools to capture a
-frame while legitimately watching — no browser-based system can do that.
-That's a deliberate, stated scope boundary, not an oversight.
+**By request, this is deliberately the simple version:** the embed URL
+has no expiry and no domain restriction, so an authorized member could
+copy it from DevTools and it would keep working elsewhere. What *is*
+still fully enforced is who can reach this endpoint at all — you must be
+authenticated, on the allowlist, and the board must be published, or the
+route never returns a URL in the first place. If copy-paste sharing
+between authorized members becomes a real problem later, Bunny's Token
+Authentication + Allowed Referrers can be reintroduced in
+`app/api/video/[id]/play/route.ts` — the code that did this was removed,
+not deleted from institutional memory, so it's a small change to bring
+back.
 
 ### 2.4 IDOR protection
 
@@ -228,8 +226,7 @@ which resource, when.
 | SQL/NoSQL injection | All queries go through the Supabase client (parameterized); all admin input validated with Zod before it reaches a query |
 | Privilege escalation | Role read server-side from `authorized_users` only; admin routes can't be reached by a USER regardless of client claims; admins can't modify their own role/status via the API (self-lockout guard, not a bypass) |
 | Fake admin requests / manipulated API calls | Every admin route independently calls `requireAdmin()`; RLS double-checks at the DB layer |
-| Leaked/shared video URLs | No permanent URL ever leaves the server; 20-minute signed URLs issued per authorized, rate-limited request |
-| Replayed playback tokens | Signed URLs expire; `video_playback_tokens` gives an audit trail of who was issued what, when |
+| Leaked/shared video URLs | Playback URL is only ever issued to an authenticated, allowlisted user via a rate-limited route — accepted trade-off: the issued URL itself has no expiry/domain lock (see §2.3), so a member could still copy-paste it onward |
 | Brute-force / abuse | Rate limiting on auth callback, admin mutations, and playback-token issuance |
 | Malicious query params / input | Zod validation on every admin-writable field (emails, URLs restricted to https, string length caps) |
 | Exposed environment variables | Service-role key isolated to one file (`lib/supabase/admin.ts`), never `NEXT_PUBLIC_`-prefixed, never sent to the client |
