@@ -18,6 +18,7 @@ export default function AdminBoardsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -91,10 +92,9 @@ export default function AdminBoardsPage() {
       <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">Admin</p>
       <h1 className="mt-2 font-display text-2xl font-semibold text-ink">Boards</h1>
       <p className="mt-2 max-w-2xl text-sm text-ink-dim">
-        Create top-level boards (leave parent empty) or nest one inside another. A board with no
-        children and no attached video shows as empty on Learn until you add a video from here in
-        a future pass, or wire one up directly via the <code className="text-ink">videos</code>{' '}
-        table for now.
+        Create top-level boards (leave parent empty) or nest one inside another. Click{' '}
+        <strong className="text-ink">Edit</strong> on an existing board to update its title,
+        description, thumbnail, or parent.
       </p>
 
       <form
@@ -143,70 +143,146 @@ export default function AdminBoardsPage() {
 
       {error && <p className="mt-3 text-xs text-danger">{error}</p>}
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-vault-border">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-vault-900 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
-            <tr>
-              <th className="px-4 py-3">Title</th>
-              <th className="px-4 py-3">Parent</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-ink-faint">
-                  Loading…
-                </td>
-              </tr>
-            ) : boards.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-ink-faint">
-                  No boards yet.
-                </td>
-              </tr>
-            ) : (
-              boards.map((b) => (
-                <tr key={b.id} className="border-t border-vault-border bg-vault-900/50">
-                  <td className="px-4 py-3 text-ink">{b.title}</td>
-                  <td className="px-4 py-3 text-ink-dim">
-                    {boards.find((p) => p.id === b.parent_id)?.title ?? '—'}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`font-mono text-[10px] uppercase tracking-widest ${
-                        b.published ? 'text-ok' : 'text-warn'
-                      }`}
-                    >
+      <div className="mt-6 space-y-3">
+        {loading ? (
+          <p className="text-center text-sm text-ink-faint">Loading…</p>
+        ) : boards.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
+            No boards yet.
+          </p>
+        ) : (
+          boards.map((b) => (
+            <div key={b.id} className="overflow-hidden rounded-xl border border-vault-border bg-vault-900">
+              <div className="flex items-center justify-between px-4 py-3">
+                <div>
+                  <p className="text-sm text-ink">{b.title}</p>
+                  <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+                    {boards.find((p) => p.id === b.parent_id)?.title ?? 'Top level'} ·{' '}
+                    <span className={b.published ? 'text-ok' : 'text-warn'}>
                       {b.published ? 'Published' : 'Draft'}
                     </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end gap-2">
-                      <button
-                        disabled={busyId === b.id}
-                        onClick={() => togglePublished(b)}
-                        className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
-                      >
-                        {b.published ? 'Unpublish' : 'Publish'}
-                      </button>
-                      <button
-                        disabled={busyId === b.id}
-                        onClick={() => removeBoard(b.id)}
-                        className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    disabled={busyId === b.id}
+                    onClick={() => togglePublished(b)}
+                    className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
+                  >
+                    {b.published ? 'Unpublish' : 'Publish'}
+                  </button>
+                  <button
+                    onClick={() => setEditingId(editingId === b.id ? null : b.id)}
+                    className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+                  >
+                    {editingId === b.id ? 'Close' : 'Edit'}
+                  </button>
+                  <button
+                    disabled={busyId === b.id}
+                    onClick={() => removeBoard(b.id)}
+                    className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+
+              {editingId === b.id && (
+                <BoardEditPanel
+                  board={b}
+                  boards={boards}
+                  onSaved={load}
+                  onError={setError}
+                />
+              )}
+            </div>
+          ))
+        )}
       </div>
     </div>
+  );
+}
+
+function BoardEditPanel({
+  board,
+  boards,
+  onSaved,
+  onError,
+}: {
+  board: Board;
+  boards: Board[];
+  onSaved: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [title, setTitle] = useState(board.title);
+  const [description, setDescription] = useState(board.description ?? '');
+  const [thumbnailUrl, setThumbnailUrl] = useState(board.thumbnail_url ?? '');
+  const [parentId, setParentId] = useState(board.parent_id ?? '');
+  const [saving, setSaving] = useState(false);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    const res = await fetch(`/api/admin/boards/${board.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title,
+        description: description || null,
+        thumbnail_url: thumbnailUrl || null,
+        parent_id: parentId || null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) onError(data.error ?? 'Could not update board.');
+    setSaving(false);
+    onSaved();
+  }
+
+  return (
+    <form
+      onSubmit={save}
+      className="grid grid-cols-1 gap-3 border-t border-vault-border bg-vault-800/50 p-5 sm:grid-cols-2"
+    >
+      <Field label="Title">
+        <input required value={title} onChange={(e) => setTitle(e.target.value)} className="input" />
+      </Field>
+      <Field label="Parent board">
+        <select value={parentId} onChange={(e) => setParentId(e.target.value)} className="input">
+          <option value="">— Top level —</option>
+          {boards
+            .filter((b) => b.id !== board.id)
+            .map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.title}
+              </option>
+            ))}
+        </select>
+      </Field>
+      <div className="sm:col-span-2">
+        <Field label="Thumbnail">
+          <ThumbnailUpload value={thumbnailUrl} onChange={setThumbnailUrl} />
+        </Field>
+      </div>
+      <div className="sm:col-span-2">
+        <Field label="Description">
+          <input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="input"
+          />
+        </Field>
+      </div>
+      <div className="sm:col-span-2">
+        <button
+          type="submit"
+          disabled={saving}
+          className="rounded-md bg-signal px-4 py-2 text-sm font-medium text-white transition hover:bg-signal-glow disabled:opacity-60"
+        >
+          {saving ? 'Saving…' : 'Save changes'}
+        </button>
+      </div>
+    </form>
   );
 }
 

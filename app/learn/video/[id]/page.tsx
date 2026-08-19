@@ -23,13 +23,19 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
   const adminClient = createSupabaseAdminClient();
   const { data: video } = await adminClient
     .from('videos')
-    .select('id, title, description, board:board_id(id, published, parent_id)')
+    .select(
+      'id, title, description, board:board_id(id, published, parent_id), video_resources(id, title, url, sort_order)'
+    )
     .eq('id', videoId)
     .maybeSingle();
 
   const board = video?.board as unknown as { id: string; published: boolean; parent_id: string | null } | null;
 
   if (!video || !board || !board.published) notFound();
+
+  const resources = (video.video_resources ?? []).sort(
+    (a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order
+  );
 
   return (
     <div className="min-h-screen bg-vault-950">
@@ -43,6 +49,28 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
         <h1 className="mt-6 font-display text-xl font-semibold text-ink">{video.title}</h1>
         {video.description && (
           <p className="mt-2 text-sm leading-relaxed text-ink-dim">{video.description}</p>
+        )}
+
+        {resources.length > 0 && (
+          <div className="mt-8 border-t border-vault-border pt-6">
+            <p className="font-mono text-[11px] uppercase tracking-widest text-ink-faint">
+              Resources
+            </p>
+            <div className="mt-3 flex flex-wrap gap-3">
+              {resources.map((r: { id: string; title: string; url: string }) => (
+                <a
+                  key={r.id}
+                  href={r.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 rounded-lg border border-vault-border bg-vault-900 px-4 py-2.5 text-sm text-ink transition hover:border-signal hover:text-signal-glow"
+                >
+                  <span aria-hidden>📄</span>
+                  {r.title}
+                </a>
+              ))}
+            </div>
+          </div>
         )}
       </main>
     </div>

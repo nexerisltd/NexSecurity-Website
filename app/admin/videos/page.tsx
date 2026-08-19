@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ThumbnailUpload } from '@/components/ThumbnailUpload';
 
 type Board = { id: string; title: string; parent_id: string | null };
+type Resource = { id: string; title: string; url: string; sort_order: number };
 type Video = {
   id: string;
   title: string;
@@ -13,15 +14,20 @@ type Video = {
   source_ref: string;
   board_id: string;
   board: { id: string; title: string } | null;
+  video_resources: Resource[];
 };
 
-// Accepts a full Bunny embed URL and pulls out "{libraryId}/{videoGuid}",
-// which is the only part we store — nothing else from the pasted URL
-// (query params, tokens, etc.) is kept.
+const RESOURCE_PRESETS = ['Lecture Sheet', 'Exam Sheet', 'Practice Sheet'];
+
+// Accepts a full Bunny embed URL and pulls out "{libraryId}/{videoGuid}".
 function parseBunnyEmbedUrl(input: string): string | null {
   const match = input.trim().match(/mediadelivery\.net\/embed\/([^/]+)\/([a-f0-9-]+)/i);
   if (!match) return null;
   return `${match[1]}/${match[2]}`;
+}
+
+function bunnyEmbedUrlFromSourceRef(sourceRef: string): string {
+  return `https://iframe.mediadelivery.net/embed/${sourceRef}`;
 }
 
 export default function AdminVideosPage() {
@@ -31,11 +37,15 @@ export default function AdminVideosPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  // Create form
   const [boardId, setBoardId] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [thumbnailUrl, setThumbnailUrl] = useState('');
   const [embedInput, setEmbedInput] = useState('');
+
+  // Which video row is expanded for editing
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -110,9 +120,9 @@ export default function AdminVideosPage() {
       <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">Admin</p>
       <h1 className="mt-2 font-display text-2xl font-semibold text-ink">Classes</h1>
       <p className="mt-2 max-w-2xl text-sm text-ink-dim">
-        Attach a class (video) to a leaf board — one with no sub-boards of its own. The Bunny
-        embed URL is never shown to members directly; it's converted into a short-lived, signed
-        playback link every time someone opens the class.
+        Attach a class (video) to a leaf board. After adding one, click{' '}
+        <strong className="text-ink">Edit</strong> on it below to update details or attach a
+        Lecture Sheet, Exam Sheet, or Practice Sheet.
       </p>
 
       <form
@@ -142,9 +152,6 @@ export default function AdminVideosPage() {
               className="input font-mono text-xs"
             />
           </Field>
-          <p className="mt-1 text-[11px] text-ink-faint">
-            Paste the raw embed URL from Bunny — only the library ID and video ID are kept.
-          </p>
         </div>
         <div className="sm:col-span-2">
           <Field label="Thumbnail">
@@ -172,55 +179,236 @@ export default function AdminVideosPage() {
 
       {error && <p className="mt-3 text-xs text-danger">{error}</p>}
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-vault-border">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-vault-900 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
-            <tr>
-              <th className="px-4 py-3">Title</th>
-              <th className="px-4 py-3">Board</th>
-              <th className="px-4 py-3">Provider</th>
-              <th className="px-4 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-ink-faint">
-                  Loading…
-                </td>
-              </tr>
-            ) : videos.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-ink-faint">
-                  No classes yet.
-                </td>
-              </tr>
-            ) : (
-              videos.map((v) => (
-                <tr key={v.id} className="border-t border-vault-border bg-vault-900/50">
-                  <td className="px-4 py-3 text-ink">{v.title}</td>
-                  <td className="px-4 py-3 text-ink-dim">{v.board?.title ?? '—'}</td>
-                  <td className="px-4 py-3">
-                    <span className="font-mono text-[10px] uppercase tracking-widest text-ink-dim">
-                      {v.provider}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end gap-2">
-                      <button
-                        disabled={busyId === v.id}
-                        onClick={() => removeVideo(v.id)}
-                        className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      <div className="mt-6 space-y-3">
+        {loading ? (
+          <p className="text-center text-sm text-ink-faint">Loading…</p>
+        ) : videos.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
+            No classes yet.
+          </p>
+        ) : (
+          videos.map((v) => (
+            <div key={v.id} className="overflow-hidden rounded-xl border border-vault-border bg-vault-900">
+              <div className="flex items-center justify-between px-4 py-3">
+                <div>
+                  <p className="text-sm text-ink">{v.title}</p>
+                  <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+                    {v.board?.title ?? '—'} · {v.video_resources?.length ?? 0} resource
+                    {v.video_resources?.length === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setEditingId(editingId === v.id ? null : v.id)}
+                    className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+                  >
+                    {editingId === v.id ? 'Close' : 'Edit'}
+                  </button>
+                  <button
+                    disabled={busyId === v.id}
+                    onClick={() => removeVideo(v.id)}
+                    className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+
+              {editingId === v.id && (
+                <VideoEditPanel video={v} onSaved={load} onError={setError} />
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VideoEditPanel({
+  video,
+  onSaved,
+  onError,
+}: {
+  video: Video;
+  onSaved: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [title, setTitle] = useState(video.title);
+  const [description, setDescription] = useState(video.description ?? '');
+  const [thumbnailUrl, setThumbnailUrl] = useState(video.thumbnail_url ?? '');
+  const [embedInput, setEmbedInput] = useState(bunnyEmbedUrlFromSourceRef(video.source_ref));
+  const [saving, setSaving] = useState(false);
+
+  const [resourceTitle, setResourceTitle] = useState('');
+  const [resourceUrl, setResourceUrl] = useState('');
+  const [addingResource, setAddingResource] = useState(false);
+  const [resources, setResources] = useState<Resource[]>(video.video_resources ?? []);
+
+  async function saveDetails(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    const patch: Record<string, unknown> = {
+      title,
+      description: description || null,
+      thumbnail_url: thumbnailUrl || null,
+    };
+    const sourceRef = parseBunnyEmbedUrl(embedInput);
+    if (sourceRef) patch.source_ref = sourceRef;
+
+    const res = await fetch(`/api/admin/videos/${video.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    const data = await res.json();
+    if (!res.ok) onError(data.error ?? 'Could not update class.');
+    setSaving(false);
+    onSaved();
+  }
+
+  async function addResource(e: React.FormEvent) {
+    e.preventDefault();
+    if (!resourceTitle || !resourceUrl) return;
+    setAddingResource(true);
+    const res = await fetch('/api/admin/resources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_id: video.id,
+        title: resourceTitle,
+        url: resourceUrl,
+        sort_order: resources.length,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      onError(data.error ?? 'Could not add resource.');
+    } else {
+      setResources([...resources, data.resource]);
+      setResourceTitle('');
+      setResourceUrl('');
+    }
+    setAddingResource(false);
+    onSaved();
+  }
+
+  async function removeResource(id: string) {
+    setResources(resources.filter((r) => r.id !== id));
+    const res = await fetch(`/api/admin/resources/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) onError(data.error ?? 'Could not remove resource.');
+    onSaved();
+  }
+
+  return (
+    <div className="border-t border-vault-border bg-vault-800/50 p-5">
+      <form onSubmit={saveDetails} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Title">
+          <input value={title} onChange={(e) => setTitle(e.target.value)} className="input" required />
+        </Field>
+        <Field label="Bunny embed URL">
+          <input
+            value={embedInput}
+            onChange={(e) => setEmbedInput(e.target.value)}
+            className="input font-mono text-xs"
+          />
+        </Field>
+        <div className="sm:col-span-2">
+          <Field label="Thumbnail">
+            <ThumbnailUpload value={thumbnailUrl} onChange={setThumbnailUrl} />
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <Field label="Description">
+            <input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="input"
+            />
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <button
+            type="submit"
+            disabled={saving}
+            className="rounded-md bg-signal px-4 py-2 text-sm font-medium text-white transition hover:bg-signal-glow disabled:opacity-60"
+          >
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+      </form>
+
+      <div className="mt-6 border-t border-vault-border pt-5">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+          Resources (Lecture Sheet, Exam Sheet, Practice Sheet…)
+        </p>
+
+        {resources.length > 0 && (
+          <ul className="mt-3 space-y-2">
+            {resources.map((r) => (
+              <li
+                key={r.id}
+                className="flex items-center justify-between rounded-md border border-vault-border bg-vault-900 px-3 py-2 text-sm"
+              >
+                <div className="min-w-0">
+                  <span className="text-ink">{r.title}</span>
+                  <span className="ml-2 truncate font-mono text-[10px] text-ink-faint">{r.url}</span>
+                </div>
+                <button
+                  onClick={() => removeResource(r.id)}
+                  className="ml-3 shrink-0 text-xs text-danger hover:underline"
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <form onSubmit={addResource} className="mt-4 flex flex-wrap items-end gap-2">
+          <div>
+            <span className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+              Name
+            </span>
+            <input
+              value={resourceTitle}
+              onChange={(e) => setResourceTitle(e.target.value)}
+              placeholder="Lecture Sheet"
+              className="input mt-1 w-40"
+            />
+            <div className="mt-1 flex gap-1">
+              {RESOURCE_PRESETS.map((preset) => (
+                <button
+                  type="button"
+                  key={preset}
+                  onClick={() => setResourceTitle(preset)}
+                  className="rounded border border-vault-border px-1.5 py-0.5 text-[10px] text-ink-faint hover:border-signal hover:text-ink"
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="min-w-[240px] flex-1">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+              Link (https)
+            </span>
+            <input
+              value={resourceUrl}
+              onChange={(e) => setResourceUrl(e.target.value)}
+              placeholder="https://…"
+              className="input mt-1"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={addingResource}
+            className="rounded-md border border-vault-border px-3 py-2 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
+          >
+            {addingResource ? 'Adding…' : 'Add resource'}
+          </button>
+        </form>
       </div>
     </div>
   );

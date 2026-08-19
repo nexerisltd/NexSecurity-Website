@@ -290,13 +290,16 @@ which resource, when.
 
 - **Rate limiting is in-memory** — replace with Upstash Redis for real
   multi-instance production traffic (see `lib/rateLimit.ts`).
-- **Admin UI covers Users, Boards, and Classes (videos)** — create,
-  publish/unpublish, upload thumbnails, attach/remove classes. The
-  **Pages** editor (the "Board → Page → Board" intermediate layer) is
-  fully defined and RLS-protected in `supabase/schema.sql` but doesn't
-  yet have a dedicated admin UI — today, building a Page and its
-  `page_boards` links is done via the Supabase table editor. Say the word
-  and this form can be built next.
+- **Admin UI covers Users, Boards, and Classes** — create, edit,
+  publish/unpublish, upload thumbnails, and attach/remove classes and
+  their resources (Lecture Sheet, Exam Sheet, Practice Sheet, or any
+  other named link — see `video_resources` in the schema). Editing an
+  existing board or class is done via the **Edit** button on its row in
+  `/admin/boards` or `/admin/videos`. The **Pages** editor (the
+  "Board → Page → Board" intermediate layer) is fully defined and
+  RLS-protected in `supabase/schema.sql` but doesn't yet have a
+  dedicated admin UI — today, building a Page and its `page_boards`
+  links is done via the Supabase table editor.
 ### 2.6 Video provider
 
 - **Video provider**: Bunny Stream only — this is intentional, not a

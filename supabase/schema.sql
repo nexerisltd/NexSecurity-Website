@@ -119,6 +119,26 @@ create table if not exists public.video_playback_tokens (
 
 create index if not exists idx_playback_tokens_user_video on public.video_playback_tokens (user_email, video_id, created_at desc);
 
+-- ---------------------------------------------------------------------------
+-- 7. video_resources — supplementary links attached to a class (lecture
+--    sheet, exam, notes, etc). Generic title+URL rather than a fixed
+--    "kind" enum, so admins aren't boxed into predefined categories.
+--    Same access model as `videos`: no SELECT policy for regular users —
+--    only reachable via the admin client, after the video page's normal
+--    auth + board-published check has already passed (see
+--    app/learn/video/[id]/page.tsx).
+-- ---------------------------------------------------------------------------
+create table if not exists public.video_resources (
+  id uuid primary key default gen_random_uuid(),
+  video_id uuid not null references public.videos (id) on delete cascade,
+  title text not null,
+  url text not null,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_video_resources_video on public.video_resources (video_id, sort_order);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ============================================================================
@@ -130,6 +150,7 @@ alter table public.page_boards enable row level security;
 alter table public.videos enable row level security;
 alter table public.audit_logs enable row level security;
 alter table public.video_playback_tokens enable row level security;
+alter table public.video_resources enable row level security;
 
 -- Helper: is the currently authenticated user an ACTIVE authorized user?
 create or replace function public.is_authorized() returns boolean as $$
@@ -200,6 +221,13 @@ create policy page_boards_admin_write on public.page_boards
 -- PostgREST query, no matter what the client sends.
 drop policy if exists videos_admin_all on public.videos;
 create policy videos_admin_all on public.videos
+  for all using (public.is_admin()) with check (public.is_admin());
+
+-- video_resources: same reasoning as videos — no regular-user SELECT
+-- policy. The video page reaches these through the admin client only
+-- after its own auth + board-published check already passed.
+drop policy if exists video_resources_admin_all on public.video_resources;
+create policy video_resources_admin_all on public.video_resources
   for all using (public.is_admin()) with check (public.is_admin());
 
 -- audit_logs: admins can read; inserts happen via service-role from

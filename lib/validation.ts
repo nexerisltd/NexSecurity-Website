@@ -60,4 +60,14 @@ export const videoUpdateSchema = videoSchema.partial().extend({
   board_id: z.string().uuid().optional(),
 });
 
+// A resource attached to a class — a lecture sheet, an exam link, notes,
+// etc. Deliberately generic (just a title + URL) rather than a fixed set
+// of resource "kinds", so admins aren't boxed in.
+export const videoResourceSchema = z.object({
+  video_id: z.string().uuid(),
+  title: z.string().trim().min(1).max(120),
+  url: safeUrl,
+  sort_order: z.number().int().min(0).max(100000).default(0),
+});
+
 export const uuidSchema = z.string().uuid();

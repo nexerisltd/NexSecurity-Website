@@ -18,7 +18,9 @@ export async function GET() {
   const adminClient = createSupabaseAdminClient();
   const { data, error } = await adminClient
     .from('videos')
-    .select('id, title, description, thumbnail_url, provider, source_ref, board_id, board:board_id(id, title), created_at')
+    .select(
+      'id, title, description, thumbnail_url, provider, source_ref, board_id, board:board_id(id, title), created_at, video_resources(id, title, url, sort_order)'
+    )
     .order('created_at', { ascending: false });
 
   if (error) return NextResponse.json({ error: 'Something went wrong.' }, { status: 500 });
