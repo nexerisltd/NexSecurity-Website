@@ -290,6 +290,12 @@ which resource, when.
 
 - **Rate limiting is in-memory** — replace with Upstash Redis for real
   multi-instance production traffic (see `lib/rateLimit.ts`).
+- **Multiple parts per board**: a board (chapter) can hold more than one
+  class — Part 1, Part 2, Part 3, each with its own thumbnail and
+  resources. Set the "Part number" field in `/admin/videos` to control
+  order. Opening the board takes a member straight to the first part; a
+  "Parts" list appears below the player whenever a board has more than
+  one, letting them jump between parts without leaving the class.
 - **Admin UI covers Users, Boards, and Classes** — create, edit,
   publish/unpublish, upload thumbnails, and attach/remove classes and
   their resources (Lecture Sheet, Exam Sheet, Practice Sheet, or any

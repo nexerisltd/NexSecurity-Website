@@ -76,7 +76,9 @@ create table if not exists public.page_boards (
 -- ---------------------------------------------------------------------------
 create table if not exists public.videos (
   id uuid primary key default gen_random_uuid(),
-  board_id uuid unique not null references public.boards (id) on delete cascade,
+  -- No longer unique: a board (chapter) can hold multiple classes
+  -- ("Part 1", "Part 2", ...), ordered by sort_order below.
+  board_id uuid not null references public.boards (id) on delete cascade,
   title text not null,
   description text,
   thumbnail_url text,
@@ -86,9 +88,13 @@ create table if not exists public.videos (
   -- "{libraryId}/{videoGuid}" from the Bunny embed URL — never exposed
   -- to the client; only used server-side to build a signed embed token.
   source_ref text not null,
+  -- Ordering when a board has multiple parts (Part 1, Part 2, ...).
+  sort_order integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create index if not exists idx_videos_board_sort on public.videos (board_id, sort_order);
 
 -- ---------------------------------------------------------------------------
 -- 5. audit_logs — append-only security/admin event trail.

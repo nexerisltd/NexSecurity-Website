@@ -19,9 +19,10 @@ export async function GET() {
   const { data, error } = await adminClient
     .from('videos')
     .select(
-      'id, title, description, thumbnail_url, provider, source_ref, board_id, board:board_id(id, title), created_at, video_resources(id, title, url, sort_order)'
+      'id, title, description, thumbnail_url, provider, source_ref, board_id, sort_order, board:board_id(id, title), created_at, video_resources(id, title, url, sort_order)'
     )
-    .order('created_at', { ascending: false });
+    .order('board_id', { ascending: true })
+    .order('sort_order', { ascending: true });
 
   if (error) return NextResponse.json({ error: 'Something went wrong.' }, { status: 500 });
   return NextResponse.json({ videos: data });
@@ -41,21 +42,6 @@ export async function POST(request: NextRequest) {
   }
 
   const adminClient = createSupabaseAdminClient();
-
-  // One video per board (unique constraint on board_id) - fail clearly
-  // instead of a confusing DB error if a board already has one.
-  const { data: existing } = await adminClient
-    .from('videos')
-    .select('id')
-    .eq('board_id', parsed.data.board_id)
-    .maybeSingle();
-
-  if (existing) {
-    return NextResponse.json(
-      { error: 'This board already has a video. Edit or remove it first.' },
-      { status: 400 }
-    );
-  }
 
   const { data, error } = await adminClient
     .from('videos')

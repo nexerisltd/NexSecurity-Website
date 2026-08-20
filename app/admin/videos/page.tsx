@@ -15,6 +15,7 @@ type Video = {
   board_id: string;
   board: { id: string; title: string } | null;
   video_resources: Resource[];
+  sort_order: number;
 };
 
 const RESOURCE_PRESETS = ['Lecture Sheet', 'Exam Sheet', 'Practice Sheet'];
@@ -43,6 +44,7 @@ export default function AdminVideosPage() {
   const [description, setDescription] = useState('');
   const [thumbnailUrl, setThumbnailUrl] = useState('');
   const [embedInput, setEmbedInput] = useState('');
+  const [sortOrder, setSortOrder] = useState(0);
 
   // Which video row is expanded for editing
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -90,6 +92,7 @@ export default function AdminVideosPage() {
         thumbnail_url: thumbnailUrl || null,
         provider: 'bunny',
         source_ref: sourceRef,
+        sort_order: sortOrder,
       }),
     });
     const data = await res.json();
@@ -102,6 +105,7 @@ export default function AdminVideosPage() {
     setDescription('');
     setThumbnailUrl('');
     setEmbedInput('');
+    setSortOrder(0);
     load();
   }
 
@@ -141,6 +145,15 @@ export default function AdminVideosPage() {
         </Field>
         <Field label="Title">
           <input required value={title} onChange={(e) => setTitle(e.target.value)} className="input" />
+        </Field>
+        <Field label="Part number (order within this board)">
+          <input
+            type="number"
+            min={0}
+            value={sortOrder}
+            onChange={(e) => setSortOrder(Number(e.target.value))}
+            className="input"
+          />
         </Field>
         <div className="sm:col-span-2">
           <Field label="Bunny embed URL">
@@ -191,7 +204,12 @@ export default function AdminVideosPage() {
             <div key={v.id} className="overflow-hidden rounded-xl border border-vault-border bg-vault-900">
               <div className="flex items-center justify-between px-4 py-3">
                 <div>
-                  <p className="text-sm text-ink">{v.title}</p>
+                  <p className="text-sm text-ink">
+                    <span className="mr-2 font-mono text-[10px] text-signal-glow">
+                      #{v.sort_order}
+                    </span>
+                    {v.title}
+                  </p>
                   <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
                     {v.board?.title ?? '—'} · {v.video_resources?.length ?? 0} resource
                     {v.video_resources?.length === 1 ? '' : 's'}
@@ -238,6 +256,7 @@ function VideoEditPanel({
   const [description, setDescription] = useState(video.description ?? '');
   const [thumbnailUrl, setThumbnailUrl] = useState(video.thumbnail_url ?? '');
   const [embedInput, setEmbedInput] = useState(bunnyEmbedUrlFromSourceRef(video.source_ref));
+  const [sortOrder, setSortOrder] = useState(video.sort_order ?? 0);
   const [saving, setSaving] = useState(false);
 
   const [resourceTitle, setResourceTitle] = useState('');
@@ -252,6 +271,7 @@ function VideoEditPanel({
       title,
       description: description || null,
       thumbnail_url: thumbnailUrl || null,
+      sort_order: sortOrder,
     };
     const sourceRef = parseBunnyEmbedUrl(embedInput);
     if (sourceRef) patch.source_ref = sourceRef;
@@ -312,6 +332,15 @@ function VideoEditPanel({
             value={embedInput}
             onChange={(e) => setEmbedInput(e.target.value)}
             className="input font-mono text-xs"
+          />
+        </Field>
+        <Field label="Part number (order within this board)">
+          <input
+            type="number"
+            min={0}
+            value={sortOrder}
+            onChange={(e) => setSortOrder(Number(e.target.value))}
+            className="input"
           />
         </Field>
         <div className="sm:col-span-2">

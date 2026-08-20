@@ -89,14 +89,14 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
   // fully established above (authenticated + authorized + board published)
   // before we do this lookup.
   const adminClient = createSupabaseAdminClient();
-  const { data: video } = await adminClient
+  const { data: videos } = await adminClient
     .from('videos')
     .select('id')
     .eq('board_id', boardId)
-    .maybeSingle();
+    .order('sort_order', { ascending: true });
 
-  if (video) {
-    redirect(`/learn/video/${video.id}`);
+  if (videos && videos.length > 0) {
+    redirect(`/learn/video/${videos[0].id}`);
   }
 
   // Published leaf board with nothing attached yet.

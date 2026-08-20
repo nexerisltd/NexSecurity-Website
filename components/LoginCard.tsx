@@ -5,17 +5,28 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export function LoginCard({ accessDenied }: { accessDenied: boolean }) {
   const [loading, setLoading] = useState(false);
+  const [oauthError, setOauthError] = useState<string | null>(null);
 
   async function handleSignIn() {
     setLoading(true);
+    setOauthError(null);
     const supabase = createSupabaseBrowserClient();
-    await supabase.auth.signInWithOAuth({
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
         queryParams: { prompt: 'select_account' },
       },
     });
+    // If this succeeds, the browser navigates away to Google immediately
+    // and this line never runs. Reaching here means it failed — most
+    // often because the Google provider isn't enabled/configured in
+    // Supabase yet, or this origin isn't in Supabase's allowed redirect
+    // URLs (Authentication → URL Configuration).
+    if (error) {
+      setOauthError(error.message);
+      setLoading(false);
+    }
   }
 
   return (
@@ -44,6 +55,15 @@ export function LoginCard({ accessDenied }: { accessDenied: boolean }) {
           <p className="mt-2 text-sm leading-relaxed text-ink-dim">
             Sign in with the Google account your administrator has granted access to.
           </p>
+
+          {oauthError && (
+            <div className="mt-5 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-left">
+              <p className="font-mono text-[11px] uppercase tracking-widest text-danger">
+                Sign-in failed
+              </p>
+              <p className="mt-1 text-xs text-ink-dim">{oauthError}</p>
+            </div>
+          )}
 
           {accessDenied && (
             <div className="mt-5 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-left">

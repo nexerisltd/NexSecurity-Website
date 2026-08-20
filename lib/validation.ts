@@ -54,6 +54,9 @@ export const videoSchema = z.object({
   // "503487/df2a65b4-d422-4c13-9327-44081b6f5f4f", taken straight out of
   // the embed URL https://iframe.mediadelivery.net/embed/{libraryId}/{videoGuid}
   source_ref: z.string().trim().min(1).max(2048),
+  // Which part this is within the board, when a board has more than one
+  // class attached (Part 1, Part 2, ...).
+  sort_order: z.number().int().min(0).max(100000).default(0),
 });
 
 export const videoUpdateSchema = videoSchema.partial().extend({

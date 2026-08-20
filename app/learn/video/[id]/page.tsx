@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { uuidSchema } from '@/lib/validation';
 import { TopNav } from '@/components/TopNav';
 import { VideoPlayer } from '@/components/VideoPlayer';
+import { PartsList } from '@/components/PartsList';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,18 +25,35 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
   const { data: video } = await adminClient
     .from('videos')
     .select(
-      'id, title, description, board:board_id(id, published, parent_id), video_resources(id, title, url, sort_order)'
+      'id, title, description, board:board_id(id, title, published, parent_id), video_resources(id, title, url, sort_order)'
     )
     .eq('id', videoId)
     .maybeSingle();
 
-  const board = video?.board as unknown as { id: string; published: boolean; parent_id: string | null } | null;
+  const board = video?.board as unknown as {
+    id: string;
+    title: string;
+    published: boolean;
+    parent_id: string | null;
+  } | null;
 
   if (!video || !board || !board.published) notFound();
 
   const resources = (video.video_resources ?? []).sort(
     (a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order
   );
+
+  // Sibling parts within the same board/chapter (Part 1, Part 2, ...).
+  // Safe to fetch via the admin client the same way as the video itself
+  // — authorization for this board was already established above, and
+  // these siblings belong to the exact same board.
+  const { data: siblingVideos } = await adminClient
+    .from('videos')
+    .select('id, title, thumbnail_url, sort_order')
+    .eq('board_id', board.id)
+    .order('sort_order', { ascending: true });
+
+  const parts = siblingVideos ?? [];
 
   return (
     <div className="min-h-screen bg-vault-950">
@@ -45,6 +63,9 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
         backHref={`/learn/board/${board.id}`}
       />
       <main className="mx-auto max-w-4xl px-6 py-10">
+        <p className="font-mono text-[11px] uppercase tracking-widest text-signal-glow">
+          {board.title}
+        </p>
         <VideoPlayer videoId={video.id} />
         <h1 className="mt-6 font-display text-xl font-semibold text-ink">{video.title}</h1>
         {video.description && (
@@ -69,6 +90,17 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
                   {r.title}
                 </a>
               ))}
+            </div>
+          </div>
+        )}
+
+        {parts.length > 1 && (
+          <div className="mt-8 border-t border-vault-border pt-6">
+            <p className="font-mono text-[11px] uppercase tracking-widest text-ink-faint">
+              {board.title} · {parts.length} parts
+            </p>
+            <div className="mt-3">
+              <PartsList parts={parts} activeId={video.id} />
             </div>
           </div>
         )}
