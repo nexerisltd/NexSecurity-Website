@@ -19,7 +19,7 @@ export async function GET() {
   const { data, error } = await adminClient
     .from('videos')
     .select(
-      'id, title, description, thumbnail_url, provider, source_ref, board_id, sort_order, board:board_id(id, title), created_at, video_resources(id, title, url, sort_order)'
+      'id, title, description, thumbnail_url, provider, source_ref, board_id, sort_order, download_url, board:board_id(id, title), created_at, video_resources(id, title, url, sort_order)'
     )
     .order('board_id', { ascending: true })
     .order('sort_order', { ascending: true });

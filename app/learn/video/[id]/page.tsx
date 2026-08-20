@@ -25,7 +25,7 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
   const { data: video } = await adminClient
     .from('videos')
     .select(
-      'id, title, description, board:board_id(id, title, published, parent_id), video_resources(id, title, url, sort_order)'
+      'id, title, description, download_url, board:board_id(id, title, published, parent_id), video_resources(id, title, url, sort_order)'
     )
     .eq('id', videoId)
     .maybeSingle();
@@ -67,10 +67,25 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
           {board.title}
         </p>
         <VideoPlayer videoId={video.id} />
-        <h1 className="mt-6 font-display text-xl font-semibold text-ink">{video.title}</h1>
-        {video.description && (
-          <p className="mt-2 text-sm leading-relaxed text-ink-dim">{video.description}</p>
-        )}
+        <div className="mt-6 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="font-display text-xl font-semibold text-ink">{video.title}</h1>
+            {video.description && (
+              <p className="mt-2 text-sm leading-relaxed text-ink-dim">{video.description}</p>
+            )}
+          </div>
+          {video.download_url && (
+            <a
+              href={video.download_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex shrink-0 items-center gap-2 rounded-lg bg-signal px-4 py-2.5 text-sm font-medium text-white transition hover:bg-signal-glow"
+            >
+              <span aria-hidden>⬇</span>
+              Download
+            </a>
+          )}
+        </div>
 
         {resources.length > 0 && (
           <div className="mt-8 border-t border-vault-border pt-6">

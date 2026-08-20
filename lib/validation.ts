@@ -57,6 +57,8 @@ export const videoSchema = z.object({
   // Which part this is within the board, when a board has more than one
   // class attached (Part 1, Part 2, ...).
   sort_order: z.number().int().min(0).max(100000).default(0),
+  // A single dedicated download link for this class.
+  download_url: safeUrl.optional().nullable(),
 });
 
 export const videoUpdateSchema = videoSchema.partial().extend({

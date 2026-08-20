@@ -16,6 +16,7 @@ type Video = {
   board: { id: string; title: string } | null;
   video_resources: Resource[];
   sort_order: number;
+  download_url: string | null;
 };
 
 const RESOURCE_PRESETS = ['Lecture Sheet', 'Exam Sheet', 'Practice Sheet'];
@@ -45,6 +46,7 @@ export default function AdminVideosPage() {
   const [thumbnailUrl, setThumbnailUrl] = useState('');
   const [embedInput, setEmbedInput] = useState('');
   const [sortOrder, setSortOrder] = useState(0);
+  const [downloadUrl, setDownloadUrl] = useState('');
 
   // Which video row is expanded for editing
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -93,6 +95,7 @@ export default function AdminVideosPage() {
         provider: 'bunny',
         source_ref: sourceRef,
         sort_order: sortOrder,
+        download_url: downloadUrl || null,
       }),
     });
     const data = await res.json();
@@ -106,6 +109,7 @@ export default function AdminVideosPage() {
     setThumbnailUrl('');
     setEmbedInput('');
     setSortOrder(0);
+    setDownloadUrl('');
     load();
   }
 
@@ -169,6 +173,16 @@ export default function AdminVideosPage() {
         <div className="sm:col-span-2">
           <Field label="Thumbnail">
             <ThumbnailUpload value={thumbnailUrl} onChange={setThumbnailUrl} />
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <Field label="Download link (optional, https)">
+            <input
+              value={downloadUrl}
+              onChange={(e) => setDownloadUrl(e.target.value)}
+              placeholder="https://…"
+              className="input"
+            />
           </Field>
         </div>
         <div className="sm:col-span-2">
@@ -257,6 +271,7 @@ function VideoEditPanel({
   const [thumbnailUrl, setThumbnailUrl] = useState(video.thumbnail_url ?? '');
   const [embedInput, setEmbedInput] = useState(bunnyEmbedUrlFromSourceRef(video.source_ref));
   const [sortOrder, setSortOrder] = useState(video.sort_order ?? 0);
+  const [downloadUrl, setDownloadUrl] = useState(video.download_url ?? '');
   const [saving, setSaving] = useState(false);
 
   const [resourceTitle, setResourceTitle] = useState('');
@@ -272,6 +287,7 @@ function VideoEditPanel({
       description: description || null,
       thumbnail_url: thumbnailUrl || null,
       sort_order: sortOrder,
+      download_url: downloadUrl || null,
     };
     const sourceRef = parseBunnyEmbedUrl(embedInput);
     if (sourceRef) patch.source_ref = sourceRef;
@@ -346,6 +362,16 @@ function VideoEditPanel({
         <div className="sm:col-span-2">
           <Field label="Thumbnail">
             <ThumbnailUpload value={thumbnailUrl} onChange={setThumbnailUrl} />
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <Field label="Download link (optional, https)">
+            <input
+              value={downloadUrl}
+              onChange={(e) => setDownloadUrl(e.target.value)}
+              placeholder="https://…"
+              className="input"
+            />
           </Field>
         </div>
         <div className="sm:col-span-2">

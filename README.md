@@ -290,6 +290,11 @@ which resource, when.
 
 - **Rate limiting is in-memory** — replace with Upstash Redis for real
   multi-instance production traffic (see `lib/rateLimit.ts`).
+- **Per-class download link**: each class has its own optional
+  `download_url` field (set in `/admin/videos`, shown as a distinct
+  "Download" button on the class page) — separate from the general
+  Resources list, since it's one dedicated link per class rather than a
+  named collection.
 - **Multiple parts per board**: a board (chapter) can hold more than one
   class — Part 1, Part 2, Part 3, each with its own thumbnail and
   resources. Set the "Part number" field in `/admin/videos` to control

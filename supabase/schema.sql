@@ -90,6 +90,9 @@ create table if not exists public.videos (
   source_ref text not null,
   -- Ordering when a board has multiple parts (Part 1, Part 2, ...).
   sort_order integer not null default 0,
+  -- A single dedicated download link for this class specifically —
+  -- distinct from the many-per-class links in video_resources below.
+  download_url text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
