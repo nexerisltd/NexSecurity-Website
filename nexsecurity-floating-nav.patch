@@ -1,0 +1,474 @@
+diff --git a/app/learn/ebooks/page.tsx b/app/learn/ebooks/page.tsx
+new file mode 100644
+index 0000000..418b515
+--- /dev/null
++++ b/app/learn/ebooks/page.tsx
+@@ -0,0 +1,87 @@
++import { redirect } from 'next/navigation';
++import { getAuth } from '@/lib/auth';
++import { createSupabaseAdminClient } from '@/lib/supabase/admin';
++import { TopNav } from '@/components/TopNav';
++import { EBookCard } from '@/components/EBookCard';
++
++export const dynamic = 'force-dynamic';
++
++type Row = {
++  id: string;
++  title: string;
++  thumbnail_url: string | null;
++  download_url: string | null;
++  format: string;
++  price: number;
++  board: { id: string; title: string } | null;
++};
++
++export default async function EBooksPage() {
++  const auth = await getAuth();
++  if (auth.state === 'UNAUTHENTICATED') redirect('/login');
++  if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
++
++  // e_books has no public SELECT policy (see supabase/schema.sql) — same
++  // reasoning as videos, so this reads through the admin client. The
++  // `board:board_id!inner(..., published)` + `.eq('board.published', true)`
++  // pair below is what performs the authorization: only e-books attached
++  // to a currently-published board are ever returned to a non-admin here.
++  const adminClient = createSupabaseAdminClient();
++  const { data: ebooks } = await adminClient
++    .from('e_books')
++    .select('id, title, thumbnail_url, download_url, format, price, board:board_id!inner(id, title, published)')
++    .eq('board.published', true)
++    .order('board_id', { ascending: true })
++    .order('sort_order', { ascending: true });
++
++  const rows = (ebooks ?? []) as unknown as Row[];
++
++  const grouped = new Map<string, { boardTitle: string; items: Row[] }>();
++  for (const row of rows) {
++    if (!row.board) continue;
++    const key = row.board.id;
++    if (!grouped.has(key)) grouped.set(key, { boardTitle: row.board.title, items: [] });
++    grouped.get(key)!.items.push(row);
++  }
++
++  return (
++    <div className="min-h-screen bg-vault-950">
++      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} />
++      <main className="mx-auto max-w-6xl px-6 py-10">
++        <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
++          Digital Library
++        </p>
++        <h1 className="mt-2 font-display text-2xl font-semibold text-ink">E-Books</h1>
++        <p className="mt-2 max-w-xl text-sm text-ink-dim">
++          Study guides and notes from every board you have access to, in one place.
++        </p>
++
++        {grouped.size === 0 ? (
++          <div className="mt-10 rounded-xl border border-dashed border-vault-border p-10 text-center">
++            <p className="text-sm text-ink-dim">No e-books have been published yet.</p>
++          </div>
++        ) : (
++          Array.from(grouped.values()).map((group) => (
++            <section key={group.boardTitle} className="mt-10">
++              <p className="font-mono text-[11px] uppercase tracking-widest text-ink-faint">
++                {group.boardTitle}
++              </p>
++              <div className="mt-4 grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
++                {group.items.map((eb) => (
++                  <EBookCard
++                    key={eb.id}
++                    title={eb.title}
++                    thumbnailUrl={eb.thumbnail_url}
++                    downloadUrl={eb.download_url}
++                    format={eb.format}
++                    price={Number(eb.price)}
++                  />
++                ))}
++              </div>
++            </section>
++          ))
++        )}
++      </main>
++    </div>
++  );
++}
+diff --git a/app/learn/routines/page.tsx b/app/learn/routines/page.tsx
+new file mode 100644
+index 0000000..b9d4022
+--- /dev/null
++++ b/app/learn/routines/page.tsx
+@@ -0,0 +1,71 @@
++import { redirect } from 'next/navigation';
++import { getAuth } from '@/lib/auth';
++import { createSupabaseServerClient } from '@/lib/supabase/server';
++import { TopNav } from '@/components/TopNav';
++
++export const dynamic = 'force-dynamic';
++
++export default async function RoutinesPage() {
++  const auth = await getAuth();
++  if (auth.state === 'UNAUTHENTICATED') redirect('/login');
++  if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
++
++  // boards IS directly readable by any authorized user for published rows
++  // (see boards_select_authorized in supabase/schema.sql) — no admin
++  // client needed here, unlike videos/e_books.
++  const supabase = createSupabaseServerClient();
++  const { data: routines } = await supabase
++    .from('boards')
++    .select('id, title, description, routine_image_url')
++    .eq('board_type', 'routine')
++    .eq('published', true)
++    .order('sort_order', { ascending: true });
++
++  return (
++    <div className="min-h-screen bg-vault-950">
++      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} />
++      <main className="mx-auto max-w-5xl px-6 py-10">
++        <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
++          Schedules
++        </p>
++        <h1 className="mt-2 font-display text-2xl font-semibold text-ink">Routines</h1>
++        <p className="mt-2 max-w-xl text-sm text-ink-dim">
++          Class routines and timetables, kept up to date by your administrator.
++        </p>
++
++        {!routines || routines.length === 0 ? (
++          <div className="mt-10 rounded-xl border border-dashed border-vault-border p-10 text-center">
++            <p className="text-sm text-ink-dim">No routines have been published yet.</p>
++          </div>
++        ) : (
++          <div className="mt-8 space-y-8">
++            {routines.map((r) => (
++              <div key={r.id} className="glass-panel overflow-hidden rounded-2xl">
++                <div className="border-b border-white/50 px-6 py-4">
++                  <h2 className="font-display text-base font-semibold text-ink">{r.title}</h2>
++                  {r.description && <p className="mt-1 text-sm text-ink-dim">{r.description}</p>}
++                </div>
++                <div className="aspect-video w-full bg-vault-800">
++                  {r.routine_image_url ? (
++                    // eslint-disable-next-line @next/next/no-img-element
++                    <img
++                      src={r.routine_image_url}
++                      alt={r.title}
++                      className="h-full w-full object-contain"
++                    />
++                  ) : (
++                    <div className="flex h-full w-full items-center justify-center">
++                      <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
++                        Not uploaded yet
++                      </span>
++                    </div>
++                  )}
++                </div>
++              </div>
++            ))}
++          </div>
++        )}
++      </main>
++    </div>
++  );
++}
+diff --git a/app/page.tsx b/app/page.tsx
+index 6f20fb2..985de42 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -1,8 +1,9 @@
+ import Link from 'next/link';
+ import { PublicNav } from '@/components/PublicNav';
+ import { PublicFooter } from '@/components/PublicFooter';
++import { getAuth } from '@/lib/auth';
+ 
+-export const dynamic = 'force-static';
++export const dynamic = 'force-dynamic';
+ 
+ const STATS = [
+   { label: 'Active members', value: '—' },
+@@ -48,10 +49,13 @@ const REVIEWS = [
+   },
+ ];
+ 
+-export default function HomePage() {
++export default async function HomePage() {
++  const auth = await getAuth();
++  const isMember = auth.state === 'AUTHORIZED';
++
+   return (
+     <div className="min-h-screen bg-vault-950">
+-      <PublicNav />
++      <PublicNav isMember={isMember} />
+ 
+       {/* Hero */}
+       <section className="relative overflow-hidden bg-grid bg-[size:32px_32px]">
+@@ -68,12 +72,21 @@ export default function HomePage() {
+             nothing to see.
+           </p>
+           <div className="mt-8 flex items-center justify-center gap-3">
+-            <Link
+-              href="/login"
+-              className="rounded-lg bg-signal px-6 py-3 text-sm font-medium text-white transition hover:bg-signal-glow"
+-            >
+-              Member sign in
+-            </Link>
++            {isMember ? (
++              <Link
++                href="/learn"
++                className="rounded-lg bg-signal px-6 py-3 text-sm font-medium text-white transition hover:bg-signal-glow"
++              >
++                Go to Learn
++              </Link>
++            ) : (
++              <Link
++                href="/login"
++                className="rounded-lg bg-signal px-6 py-3 text-sm font-medium text-white transition hover:bg-signal-glow"
++              >
++                Member sign in
++              </Link>
++            )}
+             <Link
+               href="/#paths"
+               className="rounded-lg border border-vault-border px-6 py-3 text-sm font-medium text-ink-dim transition hover:border-signal hover:text-ink"
+@@ -182,14 +195,18 @@ export default function HomePage() {
+       <section className="border-t border-vault-border">
+         <div className="mx-auto max-w-6xl px-6 py-20 text-center">
+           <h2 className="font-display text-2xl font-semibold text-ink sm:text-3xl">
+-            Already a member?
++            {isMember ? 'Welcome back.' : 'Already a member?'}
+           </h2>
+-          <p className="mt-2 text-sm text-ink-dim">Sign in with the Google account on file.</p>
++          <p className="mt-2 text-sm text-ink-dim">
++            {isMember
++              ? 'Jump back into your boards and classes.'
++              : 'Sign in with the Google account on file.'}
++          </p>
+           <Link
+-            href="/login"
++            href={isMember ? '/learn' : '/login'}
+             className="mt-6 inline-block rounded-lg bg-signal px-6 py-3 text-sm font-medium text-white transition hover:bg-signal-glow"
+           >
+-            Member sign in
++            {isMember ? 'Go to Learn' : 'Member sign in'}
+           </Link>
+         </div>
+       </section>
+diff --git a/components/PublicNav.tsx b/components/PublicNav.tsx
+index 9b1b068..e58b11d 100644
+--- a/components/PublicNav.tsx
++++ b/components/PublicNav.tsx
+@@ -1,7 +1,7 @@
+ import Link from 'next/link';
+ import Image from 'next/image';
+ 
+-export function PublicNav() {
++export function PublicNav({ isMember = false }: { isMember?: boolean }) {
+   return (
+     <header className="sticky top-0 z-20 border-b border-white/60 bg-white/55 backdrop-blur-xl">
+       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3.5">
+@@ -26,12 +26,21 @@ export function PublicNav() {
+           </Link>
+         </nav>
+ 
+-        <Link
+-          href="/login"
+-          className="rounded-full bg-signal px-4 py-2 text-sm font-medium text-white shadow-glow transition hover:bg-signal-glow"
+-        >
+-          Member sign in
+-        </Link>
++        {isMember ? (
++          <Link
++            href="/learn"
++            className="rounded-full bg-signal px-4 py-2 text-sm font-medium text-white shadow-glow transition hover:bg-signal-glow"
++          >
++            Learn
++          </Link>
++        ) : (
++          <Link
++            href="/login"
++            className="rounded-full bg-signal px-4 py-2 text-sm font-medium text-white shadow-glow transition hover:bg-signal-glow"
++          >
++            Member sign in
++          </Link>
++        )}
+       </div>
+     </header>
+   );
+diff --git a/components/TopNav.tsx b/components/TopNav.tsx
+index 3745d9b..680376a 100644
+--- a/components/TopNav.tsx
++++ b/components/TopNav.tsx
+@@ -2,9 +2,12 @@
+ 
+ import Link from 'next/link';
+ import Image from 'next/image';
+-import { useRouter } from 'next/navigation';
++import { usePathname, useRouter } from 'next/navigation';
++import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+ 
++type NavItem = { href: string; label: string; match: (path: string) => boolean };
++
+ export function TopNav({
+   email,
+   isAdmin,
+@@ -12,11 +15,55 @@ export function TopNav({
+ }: {
+   email: string;
+   isAdmin: boolean;
++  /** Optional small back-chevron shown to the left of the logo (e.g. a
++   * board or video page linking back to its parent). The nav items
++   * themselves are always shown — this never replaces them. */
+   backHref?: string;
+ }) {
++  const pathname = usePathname();
+   const router = useRouter();
++  const [loggingOut, setLoggingOut] = useState(false);
++
++  const items: NavItem[] = [
++    { href: '/', label: 'Home', match: (p) => p === '/' },
++    {
++      href: '/learn',
++      label: 'Learn',
++      match: (p) => p === '/learn' || p.startsWith('/learn/board') || p.startsWith('/learn/video'),
++    },
++    { href: '/learn/ebooks', label: 'E-Book', match: (p) => p.startsWith('/learn/ebooks') },
++    { href: '/learn/routines', label: 'Routine', match: (p) => p.startsWith('/learn/routines') },
++    ...(isAdmin ? [{ href: '/admin', label: 'Admin', match: (p: string) => p.startsWith('/admin') }] : []),
++  ];
++
++  const activeHref = items.find((i) => i.match(pathname))?.href ?? items[0].href;
++
++  const railRef = useRef<HTMLDivElement>(null);
++  const itemRefs = useRef<Map<string, HTMLAnchorElement>>(new Map());
++  const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
++
++  function measure() {
++    const el = itemRefs.current.get(activeHref);
++    const rail = railRef.current;
++    if (!el || !rail) return;
++    const elRect = el.getBoundingClientRect();
++    const railRect = rail.getBoundingClientRect();
++    setIndicator({ left: elRect.left - railRect.left, width: elRect.width });
++  }
++
++  useLayoutEffect(() => {
++    measure();
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [activeHref]);
++
++  useEffect(() => {
++    window.addEventListener('resize', measure);
++    return () => window.removeEventListener('resize', measure);
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [activeHref]);
+ 
+   async function handleLogout() {
++    setLoggingOut(true);
+     const supabase = createSupabaseBrowserClient();
+     await supabase.auth.signOut();
+     router.push('/login');
+@@ -24,48 +71,67 @@ export function TopNav({
+   }
+ 
+   return (
+-    <header className="sticky top-0 z-10 border-b border-white/60 bg-white/55 backdrop-blur-xl">
+-      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3.5">
+-        <div className="flex items-center gap-4">
+-          {backHref ? (
+-            <Link
+-              href={backHref}
+-              className="font-mono text-xs uppercase tracking-widest text-ink-dim transition hover:text-ink"
+-            >
+-              ← Back
+-            </Link>
+-          ) : (
+-            <Link href="/learn" className="flex items-center gap-2.5">
+-              <span className="relative h-8 w-8 overflow-hidden rounded-lg border border-white/70 bg-white/70 shadow-glass">
+-                <Image src="/logo.png" alt="NexSecurity" fill className="object-cover" />
+-              </span>
+-              <span className="font-display text-sm font-semibold tracking-tight text-ink">
+-                NexSecurity
+-              </span>
+-            </Link>
+-          )}
+-        </div>
++    <div className="sticky top-4 z-30 flex justify-center px-4">
++      <div className="glass-panel flex w-full max-w-3xl items-center gap-1 rounded-full p-1.5">
++        {backHref && (
++          <Link
++            href={backHref}
++            title="Back"
++            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-ink-dim transition hover:bg-white/70 hover:text-ink"
++          >
++            ←
++          </Link>
++        )}
+ 
+-        <div className="flex items-center gap-3">
+-          {isAdmin && (
+-            <Link
+-              href="/admin"
+-              className="rounded-full border border-vault-border bg-white/50 px-3.5 py-1.5 font-mono text-[11px] uppercase tracking-widest text-signal backdrop-blur-sm transition hover:border-signal hover:bg-white/80"
+-            >
+-              Admin
+-            </Link>
+-          )}
+-          <span className="hidden font-mono text-[11px] text-ink-faint sm:inline">
+-            {email}
++        <Link href="/learn" className="flex shrink-0 items-center gap-2 pl-1.5 pr-2">
++          <span className="relative h-7 w-7 overflow-hidden rounded-full border border-white/70 bg-white/70">
++            <Image src="/logo.png" alt="NexSecurity" fill className="object-cover" />
+           </span>
+-          <button
+-            onClick={handleLogout}
+-            className="rounded-full border border-vault-border bg-white/50 px-3.5 py-1.5 text-xs text-ink-dim backdrop-blur-sm transition hover:border-danger/40 hover:text-danger"
+-          >
+-            Sign out
+-          </button>
++        </Link>
++
++        <div ref={railRef} className="relative flex flex-1 items-center gap-0.5 overflow-x-auto">
++          {indicator && (
++            <div
++              className="absolute top-0 h-full rounded-full border border-signal/30 bg-signal/10 transition-[left,width] duration-300 ease-out"
++              style={{ left: indicator.left, width: indicator.width }}
++            />
++          )}
++          {items.map((item) => {
++            const active = item.href === activeHref;
++            return (
++              <Link
++                key={item.href}
++                href={item.href}
++                ref={(el) => {
++                  if (el) itemRefs.current.set(item.href, el);
++                }}
++                className={`relative z-10 shrink-0 whitespace-nowrap rounded-full px-3.5 py-2 text-xs font-medium transition ${
++                  active ? 'text-signal' : 'text-ink-dim hover:text-ink'
++                }`}
++              >
++                {item.label}
++              </Link>
++            );
++          })}
+         </div>
++
++        <button
++          onClick={handleLogout}
++          disabled={loggingOut}
++          title={`Sign out (${email})`}
++          className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-vault-border bg-white/60 text-ink-faint transition hover:border-danger/40 hover:text-danger disabled:opacity-60"
++        >
++          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
++            <path
++              d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"
++              stroke="currentColor"
++              strokeWidth="2"
++              strokeLinecap="round"
++              strokeLinejoin="round"
++            />
++          </svg>
++        </button>
+       </div>
+-    </header>
++    </div>
+   );
+ }

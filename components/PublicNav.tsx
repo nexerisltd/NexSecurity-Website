@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 
-export function PublicNav() {
+export function PublicNav({ isMember = false }: { isMember?: boolean }) {
   return (
     <header className="sticky top-0 z-20 border-b border-white/60 bg-white/55 backdrop-blur-xl">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3.5">
@@ -26,12 +26,21 @@ export function PublicNav() {
           </Link>
         </nav>
 
-        <Link
-          href="/login"
-          className="rounded-full bg-signal px-4 py-2 text-sm font-medium text-white shadow-glow transition hover:bg-signal-glow"
-        >
-          Member sign in
-        </Link>
+        {isMember ? (
+          <Link
+            href="/learn"
+            className="rounded-full bg-signal px-4 py-2 text-sm font-medium text-white shadow-glow transition hover:bg-signal-glow"
+          >
+            Learn
+          </Link>
+        ) : (
+          <Link
+            href="/login"
+            className="rounded-full bg-signal px-4 py-2 text-sm font-medium text-white shadow-glow transition hover:bg-signal-glow"
+          >
+            Member sign in
+          </Link>
+        )}
       </div>
     </header>
   );

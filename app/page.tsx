@@ -1,8 +1,9 @@
 import Link from 'next/link';
 import { PublicNav } from '@/components/PublicNav';
 import { PublicFooter } from '@/components/PublicFooter';
+import { getAuth } from '@/lib/auth';
 
-export const dynamic = 'force-static';
+export const dynamic = 'force-dynamic';
 
 const STATS = [
   { label: 'Active members', value: '—' },
@@ -48,10 +49,13 @@ const REVIEWS = [
   },
 ];
 
-export default function HomePage() {
+export default async function HomePage() {
+  const auth = await getAuth();
+  const isMember = auth.state === 'AUTHORIZED';
+
   return (
     <div className="min-h-screen bg-vault-950">
-      <PublicNav />
+      <PublicNav isMember={isMember} />
 
       {/* Hero */}
       <section className="relative overflow-hidden bg-grid bg-[size:32px_32px]">
@@ -68,12 +72,21 @@ export default function HomePage() {
             nothing to see.
           </p>
           <div className="mt-8 flex items-center justify-center gap-3">
-            <Link
-              href="/login"
-              className="rounded-lg bg-signal px-6 py-3 text-sm font-medium text-white transition hover:bg-signal-glow"
-            >
-              Member sign in
-            </Link>
+            {isMember ? (
+              <Link
+                href="/learn"
+                className="rounded-lg bg-signal px-6 py-3 text-sm font-medium text-white transition hover:bg-signal-glow"
+              >
+                Go to Learn
+              </Link>
+            ) : (
+              <Link
+                href="/login"
+                className="rounded-lg bg-signal px-6 py-3 text-sm font-medium text-white transition hover:bg-signal-glow"
+              >
+                Member sign in
+              </Link>
+            )}
             <Link
               href="/#paths"
               className="rounded-lg border border-vault-border px-6 py-3 text-sm font-medium text-ink-dim transition hover:border-signal hover:text-ink"
@@ -182,14 +195,18 @@ export default function HomePage() {
       <section className="border-t border-vault-border">
         <div className="mx-auto max-w-6xl px-6 py-20 text-center">
           <h2 className="font-display text-2xl font-semibold text-ink sm:text-3xl">
-            Already a member?
+            {isMember ? 'Welcome back.' : 'Already a member?'}
           </h2>
-          <p className="mt-2 text-sm text-ink-dim">Sign in with the Google account on file.</p>
+          <p className="mt-2 text-sm text-ink-dim">
+            {isMember
+              ? 'Jump back into your boards and classes.'
+              : 'Sign in with the Google account on file.'}
+          </p>
           <Link
-            href="/login"
+            href={isMember ? '/learn' : '/login'}
             className="mt-6 inline-block rounded-lg bg-signal px-6 py-3 text-sm font-medium text-white transition hover:bg-signal-glow"
           >
-            Member sign in
+            {isMember ? 'Go to Learn' : 'Member sign in'}
           </Link>
         </div>
       </section>
