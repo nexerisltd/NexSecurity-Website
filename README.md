@@ -20,7 +20,18 @@ anything that decides access.
 
 ### 1.1 Supabase
 
-1. Open your project → **SQL Editor** → paste and run `supabase/schema.sql`.
+1. **New project (first setup):** Open your project → **SQL Editor** →
+   paste and run `supabase/schema.sql`. This creates every table fresh with
+   all current columns, so no further migration step is needed.
+
+   **Existing project (pulling new changes):** `schema.sql` uses
+   `create table if not exists`, which does nothing to a table that already
+   exists — it will **not** add columns that were added to an existing
+   table after your project was first set up. After pulling repo changes,
+   also run any new files under `supabase/migrations/` (in order, once
+   each) in the SQL Editor, or your inserts may start failing with a
+   generic "Could not create ___" error in the admin panel while the real
+   cause (a missing column) stays hidden in the server logs.
 2. **Authentication → Providers → Google**: paste your Google Client ID and
    Client Secret **here**, in the Supabase dashboard — not in this repo's
    env vars. Supabase handles the OAuth exchange.

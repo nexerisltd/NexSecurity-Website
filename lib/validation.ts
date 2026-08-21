@@ -22,6 +22,8 @@ const safeUrl = z
   .max(2048)
   .refine((val) => val.startsWith('https://'), 'URL must use https');
 
+export const boardTypeSchema = z.enum(['normal', 'routine']);
+
 export const boardSchema = z.object({
   parent_id: z.string().uuid().nullable().optional(),
   title: z.string().trim().min(1).max(200),
@@ -30,6 +32,11 @@ export const boardSchema = z.object({
   sort_order: z.number().int().min(0).max(100000).default(0),
   published: z.boolean().default(false),
   destination_page_id: z.string().uuid().nullable().optional(),
+  // 'routine' boards skip the normal board/video hierarchy entirely and
+  // just display routine_image_url (a class routine / timetable graphic,
+  // 16:9) alongside the title and description.
+  board_type: boardTypeSchema.default('normal'),
+  routine_image_url: safeUrl.optional().nullable(),
 });
 
 export const boardUpdateSchema = boardSchema.partial();
@@ -73,6 +80,25 @@ export const videoResourceSchema = z.object({
   title: z.string().trim().min(1).max(120),
   url: safeUrl,
   sort_order: z.number().int().min(0).max(100000).default(0),
+});
+
+// A downloadable e-book attached to a board (chapter/subject). Deliberately
+// separate from video_resources: e-books are their own browsable section
+// on a board's page, with a price (almost always 0 / "Free") rather than
+// being a link attached to a specific class.
+export const eBookSchema = z.object({
+  board_id: z.string().uuid(),
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(2000).optional().nullable(),
+  thumbnail_url: safeUrl.optional().nullable(),
+  download_url: safeUrl.optional().nullable(),
+  format: z.string().trim().min(1).max(40).default('PDF'),
+  price: z.number().min(0).max(1000000).default(0),
+  sort_order: z.number().int().min(0).max(100000).default(0),
+});
+
+export const eBookUpdateSchema = eBookSchema.partial().extend({
+  board_id: z.string().uuid().optional(),
 });
 
 export const uuidSchema = z.string().uuid();

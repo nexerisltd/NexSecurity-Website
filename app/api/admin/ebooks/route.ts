@@ -1,31 +1,30 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
-import { videoSchema } from '@/lib/validation';
+import { eBookSchema } from '@/lib/validation';
 import { checkRateLimit } from '@/lib/rateLimit';
 import { logAuditEvent } from '@/lib/audit';
 
 export const dynamic = 'force-dynamic';
 
-// This uses the admin client deliberately: `videos` has no SELECT policy
-// for anyone (see supabase/schema.sql), by design, so even an admin's
-// normal RLS-scoped session client can't read it - only this
-// service-role-backed, requireAdmin()-gated route can.
+// Uses the admin client deliberately: `e_books` has no SELECT policy for
+// anyone (see supabase/schema.sql), by design, same as `videos` — only
+// this service-role-backed, requireAdmin()-gated route can read it.
 export async function GET() {
   const auth = await requireAdmin();
   if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
 
   const adminClient = createSupabaseAdminClient();
   const { data, error } = await adminClient
-    .from('videos')
+    .from('e_books')
     .select(
-      'id, title, description, thumbnail_url, provider, source_ref, board_id, sort_order, download_url, board:board_id(id, title), created_at, video_resources(id, title, url, sort_order)'
+      'id, title, description, thumbnail_url, download_url, format, price, board_id, sort_order, board:board_id(id, title), created_at'
     )
     .order('board_id', { ascending: true })
     .order('sort_order', { ascending: true });
 
   if (error) return NextResponse.json({ error: 'Something went wrong.' }, { status: 500 });
-  return NextResponse.json({ videos: data });
+  return NextResponse.json({ e_books: data });
 }
 
 export async function POST(request: NextRequest) {
@@ -36,7 +35,7 @@ export async function POST(request: NextRequest) {
   if (!rl.allowed) return NextResponse.json({ error: 'Too many requests.' }, { status: 429 });
 
   const body = await request.json().catch(() => null);
-  const parsed = videoSchema.safeParse(body);
+  const parsed = eBookSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid input.' }, { status: 400 });
   }
@@ -44,20 +43,20 @@ export async function POST(request: NextRequest) {
   const adminClient = createSupabaseAdminClient();
 
   const { data, error } = await adminClient
-    .from('videos')
+    .from('e_books')
     .insert(parsed.data)
     .select('id, title')
     .single();
 
   if (error) {
-    console.error('videos insert failed:', error);
-    return NextResponse.json({ error: 'Could not create video.' }, { status: 400 });
+    console.error('e_books insert failed:', error);
+    return NextResponse.json({ error: 'Could not create e-book.' }, { status: 400 });
   }
 
   await logAuditEvent('ADMIN_ACTION', auth.user.email, data.id, {
-    action: 'VIDEO_CREATED',
+    action: 'EBOOK_CREATED',
     title: data.title,
   });
 
-  return NextResponse.json({ video: data }, { status: 201 });
+  return NextResponse.json({ e_book: data }, { status: 201 });
 }

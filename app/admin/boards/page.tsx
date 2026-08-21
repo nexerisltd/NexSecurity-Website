@@ -11,6 +11,8 @@ type Board = {
   parent_id: string | null;
   published: boolean;
   sort_order: number;
+  board_type: 'normal' | 'routine';
+  routine_image_url: string | null;
 };
 
 export default function AdminBoardsPage() {
@@ -24,6 +26,8 @@ export default function AdminBoardsPage() {
   const [description, setDescription] = useState('');
   const [thumbnailUrl, setThumbnailUrl] = useState('');
   const [parentId, setParentId] = useState('');
+  const [boardType, setBoardType] = useState<'normal' | 'routine'>('normal');
+  const [routineImageUrl, setRoutineImageUrl] = useState('');
 
   async function load() {
     setLoading(true);
@@ -50,6 +54,8 @@ export default function AdminBoardsPage() {
         parent_id: parentId || null,
         published: false,
         sort_order: 0,
+        board_type: boardType,
+        routine_image_url: boardType === 'routine' ? routineImageUrl || null : null,
       }),
     });
     const data = await res.json();
@@ -61,6 +67,8 @@ export default function AdminBoardsPage() {
     setDescription('');
     setThumbnailUrl('');
     setParentId('');
+    setBoardType('normal');
+    setRoutineImageUrl('');
     load();
   }
 
@@ -131,6 +139,23 @@ export default function AdminBoardsPage() {
             className="input"
           />
         </Field>
+        <Field label="Board type">
+          <select
+            value={boardType}
+            onChange={(e) => setBoardType(e.target.value as 'normal' | 'routine')}
+            className="input"
+          >
+            <option value="normal">Normal (boards / classes)</option>
+            <option value="routine">Routine (just an image)</option>
+          </select>
+        </Field>
+        {boardType === 'routine' && (
+          <div className="sm:col-span-2">
+            <Field label="Routine image (16:9 — this IS the routine)">
+              <ThumbnailUpload value={routineImageUrl} onChange={setRoutineImageUrl} />
+            </Field>
+          </div>
+        )}
         <div className="sm:col-span-2">
           <button
             type="submit"
@@ -218,6 +243,8 @@ function BoardEditPanel({
   const [description, setDescription] = useState(board.description ?? '');
   const [thumbnailUrl, setThumbnailUrl] = useState(board.thumbnail_url ?? '');
   const [parentId, setParentId] = useState(board.parent_id ?? '');
+  const [boardType, setBoardType] = useState<'normal' | 'routine'>(board.board_type ?? 'normal');
+  const [routineImageUrl, setRoutineImageUrl] = useState(board.routine_image_url ?? '');
   const [saving, setSaving] = useState(false);
 
   async function save(e: React.FormEvent) {
@@ -231,6 +258,8 @@ function BoardEditPanel({
         description: description || null,
         thumbnail_url: thumbnailUrl || null,
         parent_id: parentId || null,
+        board_type: boardType,
+        routine_image_url: boardType === 'routine' ? routineImageUrl || null : null,
       }),
     });
     const data = await res.json();
@@ -273,6 +302,23 @@ function BoardEditPanel({
           />
         </Field>
       </div>
+      <Field label="Board type">
+        <select
+          value={boardType}
+          onChange={(e) => setBoardType(e.target.value as 'normal' | 'routine')}
+          className="input"
+        >
+          <option value="normal">Normal (boards / classes)</option>
+          <option value="routine">Routine (just an image)</option>
+        </select>
+      </Field>
+      {boardType === 'routine' && (
+        <div className="sm:col-span-2">
+          <Field label="Routine image (16:9 — this IS the routine)">
+            <ThumbnailUpload value={routineImageUrl} onChange={setRoutineImageUrl} />
+          </Field>
+        </div>
+      )}
       <div className="sm:col-span-2">
         <button
           type="submit"

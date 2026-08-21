@@ -36,6 +36,10 @@ create table if not exists public.boards (
   thumbnail_url text,
   sort_order integer not null default 0,
   published boolean not null default false,
+  -- 'routine' boards skip the board/video hierarchy entirely and just
+  -- display routine_image_url (a class routine / timetable graphic).
+  board_type text not null default 'normal' check (board_type in ('normal', 'routine')),
+  routine_image_url text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -148,6 +152,31 @@ create table if not exists public.video_resources (
 
 create index if not exists idx_video_resources_video on public.video_resources (video_id, sort_order);
 
+-- ---------------------------------------------------------------------------
+-- 8. e_books — downloadable books attached to a board (chapter/subject),
+--    shown as their own section on that board's page. price is almost
+--    always 0 ("Free"); kept numeric rather than boolean in case a paid
+--    e-book is ever added. Same access model as video_resources: no
+--    regular-user SELECT policy — reached via the admin client only,
+--    after the board page's normal auth + published check already
+--    passed (see app/learn/board/[id]/page.tsx).
+-- ---------------------------------------------------------------------------
+create table if not exists public.e_books (
+  id uuid primary key default gen_random_uuid(),
+  board_id uuid not null references public.boards (id) on delete cascade,
+  title text not null,
+  description text,
+  thumbnail_url text,
+  download_url text,
+  format text not null default 'PDF',
+  price numeric(10, 2) not null default 0,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_e_books_board_sort on public.e_books (board_id, sort_order);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ============================================================================
@@ -160,6 +189,7 @@ alter table public.videos enable row level security;
 alter table public.audit_logs enable row level security;
 alter table public.video_playback_tokens enable row level security;
 alter table public.video_resources enable row level security;
+alter table public.e_books enable row level security;
 
 -- Helper: is the currently authenticated user an ACTIVE authorized user?
 create or replace function public.is_authorized() returns boolean as $$
@@ -237,6 +267,13 @@ create policy videos_admin_all on public.videos
 -- after its own auth + board-published check already passed.
 drop policy if exists video_resources_admin_all on public.video_resources;
 create policy video_resources_admin_all on public.video_resources
+  for all using (public.is_admin()) with check (public.is_admin());
+
+-- e_books: same reasoning as video_resources — no regular-user SELECT
+-- policy. The board page reaches these through the admin client only
+-- after its own auth + board-published check already passed.
+drop policy if exists e_books_admin_all on public.e_books;
+create policy e_books_admin_all on public.e_books
   for all using (public.is_admin()) with check (public.is_admin());
 
 -- audit_logs: admins can read; inserts happen via service-role from

@@ -1,0 +1,1040 @@
+diff --git a/README.md b/README.md
+index 69e86bb..c3abcb6 100644
+--- a/README.md
++++ b/README.md
+@@ -20,7 +20,18 @@ anything that decides access.
+ 
+ ### 1.1 Supabase
+ 
+-1. Open your project → **SQL Editor** → paste and run `supabase/schema.sql`.
++1. **New project (first setup):** Open your project → **SQL Editor** →
++   paste and run `supabase/schema.sql`. This creates every table fresh with
++   all current columns, so no further migration step is needed.
++
++   **Existing project (pulling new changes):** `schema.sql` uses
++   `create table if not exists`, which does nothing to a table that already
++   exists — it will **not** add columns that were added to an existing
++   table after your project was first set up. After pulling repo changes,
++   also run any new files under `supabase/migrations/` (in order, once
++   each) in the SQL Editor, or your inserts may start failing with a
++   generic "Could not create ___" error in the admin panel while the real
++   cause (a missing column) stays hidden in the server logs.
+ 2. **Authentication → Providers → Google**: paste your Google Client ID and
+    Client Secret **here**, in the Supabase dashboard — not in this repo's
+    env vars. Supabase handles the OAuth exchange.
+diff --git a/app/admin/boards/page.tsx b/app/admin/boards/page.tsx
+index 3a74906..d81e375 100644
+--- a/app/admin/boards/page.tsx
++++ b/app/admin/boards/page.tsx
+@@ -11,6 +11,8 @@ type Board = {
+   parent_id: string | null;
+   published: boolean;
+   sort_order: number;
++  board_type: 'normal' | 'routine';
++  routine_image_url: string | null;
+ };
+ 
+ export default function AdminBoardsPage() {
+@@ -24,6 +26,8 @@ export default function AdminBoardsPage() {
+   const [description, setDescription] = useState('');
+   const [thumbnailUrl, setThumbnailUrl] = useState('');
+   const [parentId, setParentId] = useState('');
++  const [boardType, setBoardType] = useState<'normal' | 'routine'>('normal');
++  const [routineImageUrl, setRoutineImageUrl] = useState('');
+ 
+   async function load() {
+     setLoading(true);
+@@ -50,6 +54,8 @@ export default function AdminBoardsPage() {
+         parent_id: parentId || null,
+         published: false,
+         sort_order: 0,
++        board_type: boardType,
++        routine_image_url: boardType === 'routine' ? routineImageUrl || null : null,
+       }),
+     });
+     const data = await res.json();
+@@ -61,6 +67,8 @@ export default function AdminBoardsPage() {
+     setDescription('');
+     setThumbnailUrl('');
+     setParentId('');
++    setBoardType('normal');
++    setRoutineImageUrl('');
+     load();
+   }
+ 
+@@ -131,6 +139,23 @@ export default function AdminBoardsPage() {
+             className="input"
+           />
+         </Field>
++        <Field label="Board type">
++          <select
++            value={boardType}
++            onChange={(e) => setBoardType(e.target.value as 'normal' | 'routine')}
++            className="input"
++          >
++            <option value="normal">Normal (boards / classes)</option>
++            <option value="routine">Routine (just an image)</option>
++          </select>
++        </Field>
++        {boardType === 'routine' && (
++          <div className="sm:col-span-2">
++            <Field label="Routine image (16:9 — this IS the routine)">
++              <ThumbnailUpload value={routineImageUrl} onChange={setRoutineImageUrl} />
++            </Field>
++          </div>
++        )}
+         <div className="sm:col-span-2">
+           <button
+             type="submit"
+@@ -218,6 +243,8 @@ function BoardEditPanel({
+   const [description, setDescription] = useState(board.description ?? '');
+   const [thumbnailUrl, setThumbnailUrl] = useState(board.thumbnail_url ?? '');
+   const [parentId, setParentId] = useState(board.parent_id ?? '');
++  const [boardType, setBoardType] = useState<'normal' | 'routine'>(board.board_type ?? 'normal');
++  const [routineImageUrl, setRoutineImageUrl] = useState(board.routine_image_url ?? '');
+   const [saving, setSaving] = useState(false);
+ 
+   async function save(e: React.FormEvent) {
+@@ -231,6 +258,8 @@ function BoardEditPanel({
+         description: description || null,
+         thumbnail_url: thumbnailUrl || null,
+         parent_id: parentId || null,
++        board_type: boardType,
++        routine_image_url: boardType === 'routine' ? routineImageUrl || null : null,
+       }),
+     });
+     const data = await res.json();
+@@ -273,6 +302,23 @@ function BoardEditPanel({
+           />
+         </Field>
+       </div>
++      <Field label="Board type">
++        <select
++          value={boardType}
++          onChange={(e) => setBoardType(e.target.value as 'normal' | 'routine')}
++          className="input"
++        >
++          <option value="normal">Normal (boards / classes)</option>
++          <option value="routine">Routine (just an image)</option>
++        </select>
++      </Field>
++      {boardType === 'routine' && (
++        <div className="sm:col-span-2">
++          <Field label="Routine image (16:9 — this IS the routine)">
++            <ThumbnailUpload value={routineImageUrl} onChange={setRoutineImageUrl} />
++          </Field>
++        </div>
++      )}
+       <div className="sm:col-span-2">
+         <button
+           type="submit"
+diff --git a/app/admin/ebooks/page.tsx b/app/admin/ebooks/page.tsx
+new file mode 100644
+index 0000000..e812dec
+--- /dev/null
++++ b/app/admin/ebooks/page.tsx
+@@ -0,0 +1,240 @@
++'use client';
++
++import { useEffect, useState } from 'react';
++import { ThumbnailUpload } from '@/components/ThumbnailUpload';
++
++type Board = { id: string; title: string };
++
++type EBook = {
++  id: string;
++  title: string;
++  description: string | null;
++  thumbnail_url: string | null;
++  download_url: string | null;
++  format: string;
++  price: number;
++  board_id: string;
++  sort_order: number;
++  board: { id: string; title: string } | null;
++};
++
++const FORMATS = ['PDF', 'EPUB', 'DOCX', 'Other'];
++
++export default function AdminEBooksPage() {
++  const [boards, setBoards] = useState<Board[]>([]);
++  const [ebooks, setEbooks] = useState<EBook[]>([]);
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState<string | null>(null);
++  const [busyId, setBusyId] = useState<string | null>(null);
++  const [editingId, setEditingId] = useState<string | null>(null);
++
++  const [boardId, setBoardId] = useState('');
++  const [title, setTitle] = useState('');
++  const [thumbnailUrl, setThumbnailUrl] = useState('');
++  const [downloadUrl, setDownloadUrl] = useState('');
++  const [format, setFormat] = useState('PDF');
++  const [price, setPrice] = useState('0');
++  const [description, setDescription] = useState('');
++
++  async function load() {
++    setLoading(true);
++    const [boardsRes, ebooksRes] = await Promise.all([
++      fetch('/api/admin/boards'),
++      fetch('/api/admin/ebooks'),
++    ]);
++    const boardsData = await boardsRes.json();
++    const ebooksData = await ebooksRes.json();
++    if (boardsRes.ok) setBoards(boardsData.boards);
++    if (ebooksRes.ok) setEbooks(ebooksData.e_books);
++    setLoading(false);
++  }
++
++  useEffect(() => {
++    load();
++  }, []);
++
++  async function createEBook(e: React.FormEvent) {
++    e.preventDefault();
++    setError(null);
++    const res = await fetch('/api/admin/ebooks', {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({
++        board_id: boardId,
++        title,
++        description: description || null,
++        thumbnail_url: thumbnailUrl || null,
++        download_url: downloadUrl || null,
++        format,
++        price: Number(price) || 0,
++        sort_order: 0,
++      }),
++    });
++    const data = await res.json();
++    if (!res.ok) {
++      setError(data.error ?? 'Could not create e-book.');
++      return;
++    }
++    setTitle('');
++    setThumbnailUrl('');
++    setDownloadUrl('');
++    setFormat('PDF');
++    setPrice('0');
++    setDescription('');
++    load();
++  }
++
++  async function removeEBook(id: string) {
++    if (!confirm('Delete this e-book?')) return;
++    setBusyId(id);
++    const res = await fetch(`/api/admin/ebooks/${id}`, { method: 'DELETE' });
++    const data = await res.json();
++    if (!res.ok) setError(data.error ?? 'Could not delete e-book.');
++    setBusyId(null);
++    load();
++  }
++
++  return (
++    <div>
++      <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">Admin</p>
++      <h1 className="mt-2 font-display text-2xl font-semibold text-ink">E-Books</h1>
++      <p className="mt-2 max-w-2xl text-sm text-ink-dim">
++        Attach a downloadable e-book to a board. Thumbnail should be a portrait book-cover image
++        (3:4). Leave price at 0 for a free e-book.
++      </p>
++
++      <form
++        onSubmit={createEBook}
++        className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 sm:grid-cols-2"
++      >
++        <Field label="Board">
++          <select required value={boardId} onChange={(e) => setBoardId(e.target.value)} className="input">
++            <option value="">— Select a board —</option>
++            {boards.map((b) => (
++              <option key={b.id} value={b.id}>
++                {b.title}
++              </option>
++            ))}
++          </select>
++        </Field>
++        <Field label="Title">
++          <input required value={title} onChange={(e) => setTitle(e.target.value)} className="input" />
++        </Field>
++
++        <div className="sm:col-span-2">
++          <Field label="Thumbnail (portrait, 3:4)">
++            <ThumbnailUpload value={thumbnailUrl} onChange={setThumbnailUrl} />
++          </Field>
++        </div>
++
++        <Field label="Download link (optional, https)">
++          <input
++            value={downloadUrl}
++            onChange={(e) => setDownloadUrl(e.target.value)}
++            placeholder="https://..."
++            className="input"
++          />
++        </Field>
++        <div className="grid grid-cols-2 gap-3">
++          <Field label="Format">
++            <select value={format} onChange={(e) => setFormat(e.target.value)} className="input">
++              {FORMATS.map((f) => (
++                <option key={f} value={f}>
++                  {f}
++                </option>
++              ))}
++            </select>
++          </Field>
++          <Field label="Price (0 = Free)">
++            <input
++              type="number"
++              min="0"
++              step="0.01"
++              value={price}
++              onChange={(e) => setPrice(e.target.value)}
++              className="input"
++            />
++          </Field>
++        </div>
++
++        <div className="sm:col-span-2">
++          <Field label="Description">
++            <input
++              value={description}
++              onChange={(e) => setDescription(e.target.value)}
++              className="input"
++            />
++          </Field>
++        </div>
++
++        <div className="sm:col-span-2">
++          <button
++            type="submit"
++            className="rounded-md bg-signal px-4 py-2 text-sm font-medium text-white transition hover:bg-signal-glow"
++          >
++            Add e-book
++          </button>
++        </div>
++      </form>
++
++      {error && <p className="mt-3 text-xs text-danger">{error}</p>}
++
++      <div className="mt-6 space-y-3">
++        {loading ? (
++          <p className="text-center text-sm text-ink-faint">Loading…</p>
++        ) : ebooks.length === 0 ? (
++          <p className="rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
++            No e-books yet.
++          </p>
++        ) : (
++          ebooks.map((eb) => (
++            <div
++              key={eb.id}
++              className="flex items-center justify-between rounded-xl border border-vault-border bg-vault-900 px-4 py-3"
++            >
++              <div className="flex items-center gap-3">
++                {eb.thumbnail_url ? (
++                  // eslint-disable-next-line @next/next/no-img-element
++                  <img
++                    src={eb.thumbnail_url}
++                    alt=""
++                    className="h-14 w-11 rounded-md border border-vault-border object-cover"
++                  />
++                ) : (
++                  <div className="flex h-14 w-11 items-center justify-center rounded-md border border-dashed border-vault-border text-[9px] text-ink-faint">
++                    No image
++                  </div>
++                )}
++                <div>
++                  <p className="text-sm text-ink">{eb.title}</p>
++                  <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
++                    {eb.board?.title ?? 'Unknown board'} · {eb.format} ·{' '}
++                    {eb.price > 0 ? `৳${eb.price}` : 'Free'}
++                  </p>
++                </div>
++              </div>
++              <button
++                disabled={busyId === eb.id}
++                onClick={() => removeEBook(eb.id)}
++                className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
++              >
++                Delete
++              </button>
++            </div>
++          ))
++        )}
++      </div>
++    </div>
++  );
++}
++
++function Field({ label, children }: { label: string; children: React.ReactNode }) {
++  return (
++    <label className="block">
++      <span className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
++        {label}
++      </span>
++      <div className="mt-1">{children}</div>
++    </label>
++  );
++}
+diff --git a/app/admin/layout.tsx b/app/admin/layout.tsx
+index d8fe17e..6a69054 100644
+--- a/app/admin/layout.tsx
++++ b/app/admin/layout.tsx
+@@ -23,6 +23,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
+           <AdminNavLink href="/admin/users" label="Users" />
+           <AdminNavLink href="/admin/boards" label="Boards" />
+           <AdminNavLink href="/admin/videos" label="Classes" />
++          <AdminNavLink href="/admin/ebooks" label="E-Books" />
+         </nav>
+         <div className="min-w-0 flex-1">{children}</div>
+       </div>
+diff --git a/app/api/admin/boards/route.ts b/app/api/admin/boards/route.ts
+index e1c73ed..1e8227a 100644
+--- a/app/api/admin/boards/route.ts
++++ b/app/api/admin/boards/route.ts
+@@ -14,7 +14,7 @@ export async function GET() {
+   const supabase = createSupabaseServerClient();
+   const { data, error } = await supabase
+     .from('boards')
+-    .select('id, title, description, thumbnail_url, parent_id, sort_order, published, destination_page_id, created_at')
++    .select('id, title, description, thumbnail_url, parent_id, sort_order, published, destination_page_id, board_type, routine_image_url, created_at')
+     .order('created_at', { ascending: false });
+ 
+   if (error) return NextResponse.json({ error: 'Something went wrong.' }, { status: 500 });
+diff --git a/app/api/admin/ebooks/[id]/route.ts b/app/api/admin/ebooks/[id]/route.ts
+new file mode 100644
+index 0000000..a401969
+--- /dev/null
++++ b/app/api/admin/ebooks/[id]/route.ts
+@@ -0,0 +1,53 @@
++import { NextResponse, type NextRequest } from 'next/server';
++import { requireAdmin } from '@/lib/auth';
++import { createSupabaseAdminClient } from '@/lib/supabase/admin';
++import { eBookUpdateSchema, uuidSchema } from '@/lib/validation';
++import { checkRateLimit } from '@/lib/rateLimit';
++import { logAuditEvent } from '@/lib/audit';
++
++export const dynamic = 'force-dynamic';
++
++export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
++  const auth = await requireAdmin();
++  if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++
++  const rl = checkRateLimit(`admin_mutate:${auth.user.email}`, 30, 60_000);
++  if (!rl.allowed) return NextResponse.json({ error: 'Too many requests.' }, { status: 429 });
++
++  const parsedId = uuidSchema.safeParse(params.id);
++  if (!parsedId.success) return NextResponse.json({ error: 'Invalid id.' }, { status: 400 });
++
++  const body = await request.json().catch(() => null);
++  const parsed = eBookUpdateSchema.safeParse(body);
++  if (!parsed.success) return NextResponse.json({ error: 'Invalid input.' }, { status: 400 });
++
++  const adminClient = createSupabaseAdminClient();
++  const { data, error } = await adminClient
++    .from('e_books')
++    .update({ ...parsed.data, updated_at: new Date().toISOString() })
++    .eq('id', parsedId.data)
++    .select('id, title')
++    .maybeSingle();
++
++  if (error || !data) {
++    return NextResponse.json({ error: 'Could not update e-book.' }, { status: 400 });
++  }
++
++  await logAuditEvent('ADMIN_ACTION', auth.user.email, data.id, { action: 'EBOOK_UPDATED' });
++  return NextResponse.json({ e_book: data });
++}
++
++export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
++  const auth = await requireAdmin();
++  if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++
++  const parsedId = uuidSchema.safeParse(params.id);
++  if (!parsedId.success) return NextResponse.json({ error: 'Invalid id.' }, { status: 400 });
++
++  const adminClient = createSupabaseAdminClient();
++  const { error } = await adminClient.from('e_books').delete().eq('id', parsedId.data);
++  if (error) return NextResponse.json({ error: 'Could not delete e-book.' }, { status: 400 });
++
++  await logAuditEvent('ADMIN_ACTION', auth.user.email, parsedId.data, { action: 'EBOOK_DELETED' });
++  return NextResponse.json({ ok: true });
++}
+diff --git a/app/api/admin/ebooks/route.ts b/app/api/admin/ebooks/route.ts
+new file mode 100644
+index 0000000..76cec87
+--- /dev/null
++++ b/app/api/admin/ebooks/route.ts
+@@ -0,0 +1,62 @@
++import { NextResponse, type NextRequest } from 'next/server';
++import { requireAdmin } from '@/lib/auth';
++import { createSupabaseAdminClient } from '@/lib/supabase/admin';
++import { eBookSchema } from '@/lib/validation';
++import { checkRateLimit } from '@/lib/rateLimit';
++import { logAuditEvent } from '@/lib/audit';
++
++export const dynamic = 'force-dynamic';
++
++// Uses the admin client deliberately: `e_books` has no SELECT policy for
++// anyone (see supabase/schema.sql), by design, same as `videos` — only
++// this service-role-backed, requireAdmin()-gated route can read it.
++export async function GET() {
++  const auth = await requireAdmin();
++  if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++
++  const adminClient = createSupabaseAdminClient();
++  const { data, error } = await adminClient
++    .from('e_books')
++    .select(
++      'id, title, description, thumbnail_url, download_url, format, price, board_id, sort_order, board:board_id(id, title), created_at'
++    )
++    .order('board_id', { ascending: true })
++    .order('sort_order', { ascending: true });
++
++  if (error) return NextResponse.json({ error: 'Something went wrong.' }, { status: 500 });
++  return NextResponse.json({ e_books: data });
++}
++
++export async function POST(request: NextRequest) {
++  const auth = await requireAdmin();
++  if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++
++  const rl = checkRateLimit(`admin_mutate:${auth.user.email}`, 30, 60_000);
++  if (!rl.allowed) return NextResponse.json({ error: 'Too many requests.' }, { status: 429 });
++
++  const body = await request.json().catch(() => null);
++  const parsed = eBookSchema.safeParse(body);
++  if (!parsed.success) {
++    return NextResponse.json({ error: 'Invalid input.' }, { status: 400 });
++  }
++
++  const adminClient = createSupabaseAdminClient();
++
++  const { data, error } = await adminClient
++    .from('e_books')
++    .insert(parsed.data)
++    .select('id, title')
++    .single();
++
++  if (error) {
++    console.error('e_books insert failed:', error);
++    return NextResponse.json({ error: 'Could not create e-book.' }, { status: 400 });
++  }
++
++  await logAuditEvent('ADMIN_ACTION', auth.user.email, data.id, {
++    action: 'EBOOK_CREATED',
++    title: data.title,
++  });
++
++  return NextResponse.json({ e_book: data }, { status: 201 });
++}
+diff --git a/app/api/admin/videos/route.ts b/app/api/admin/videos/route.ts
+index 2ecd186..a26105f 100644
+--- a/app/api/admin/videos/route.ts
++++ b/app/api/admin/videos/route.ts
+@@ -49,7 +49,10 @@ export async function POST(request: NextRequest) {
+     .select('id, title')
+     .single();
+ 
+-  if (error) return NextResponse.json({ error: 'Could not create video.' }, { status: 400 });
++  if (error) {
++    console.error('videos insert failed:', error);
++    return NextResponse.json({ error: 'Could not create video.' }, { status: 400 });
++  }
+ 
+   await logAuditEvent('ADMIN_ACTION', auth.user.email, data.id, {
+     action: 'VIDEO_CREATED',
+diff --git a/app/learn/board/[id]/page.tsx b/app/learn/board/[id]/page.tsx
+index ec0b321..448995d 100644
+--- a/app/learn/board/[id]/page.tsx
++++ b/app/learn/board/[id]/page.tsx
+@@ -5,6 +5,8 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+ import { uuidSchema } from '@/lib/validation';
+ import { TopNav } from '@/components/TopNav';
+ import { BoardCard } from '@/components/BoardCard';
++import { VideoCard } from '@/components/VideoCard';
++import { EBookCard } from '@/components/EBookCard';
+ 
+ export const dynamic = 'force-dynamic';
+ 
+@@ -27,12 +29,43 @@ export default async function BoardPage({ params }: { params: { id: string } })
+   // "doesn't exist" — that ambiguity is the point.
+   const { data: board } = await supabase
+     .from('boards')
+-    .select('id, title, description, thumbnail_url, published, destination_page_id')
++    .select(
++      'id, title, description, thumbnail_url, published, destination_page_id, board_type, routine_image_url'
++    )
+     .eq('id', boardId)
+     .maybeSingle();
+ 
+   if (!board) notFound();
+ 
++  // Case 0: a 'routine' board skips the board/video hierarchy entirely —
++  // it's just a title, description, and a single 16:9 image (the routine
++  // itself, e.g. a class timetable graphic).
++  if (board.board_type === 'routine') {
++    return (
++      <div className="min-h-screen bg-vault-950">
++        <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref="/learn" />
++        <main className="mx-auto max-w-4xl px-6 py-10">
++          <h1 className="font-display text-2xl font-semibold text-ink">{board.title}</h1>
++          {board.description && (
++            <p className="mt-2 max-w-2xl text-sm text-ink-dim">{board.description}</p>
++          )}
++          <div className="mt-6 aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-900">
++            {board.routine_image_url ? (
++              // eslint-disable-next-line @next/next/no-img-element
++              <img src={board.routine_image_url} alt={board.title} className="h-full w-full object-contain" />
++            ) : (
++              <div className="flex h-full w-full items-center justify-center">
++                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
++                  Routine not uploaded yet
++                </span>
++              </div>
++            )}
++          </div>
++        </main>
++      </div>
++    );
++  }
++
+   // Case 1: this board points at a page — show that page's boards.
+   if (board.destination_page_id) {
+     const { data: page } = await supabase
+@@ -82,29 +115,91 @@ export default async function BoardPage({ params }: { params: { id: string } })
+     );
+   }
+ 
+-  // Case 3: leaf board — look for an attached video. This is the ONLY
+-  // place a non-admin's request touches the videos table, and it's done
+-  // through the admin client specifically because RLS otherwise blocks
+-  // all non-admin reads of that table. Authorization has already been
+-  // fully established above (authenticated + authorized + board published)
+-  // before we do this lookup.
++  // Case 3: leaf board — show every class attached to it (as a grid, like
++  // a chapter's video list) plus any e-books, instead of jumping straight
++  // into Part 1. This is the ONLY place a non-admin's request touches the
++  // videos/e_books tables, and it's done through the admin client
++  // specifically because RLS otherwise blocks all non-admin reads of
++  // those tables. Authorization has already been fully established above
++  // (authenticated + authorized + board published) before these lookups.
+   const adminClient = createSupabaseAdminClient();
+-  const { data: videos } = await adminClient
+-    .from('videos')
+-    .select('id')
+-    .eq('board_id', boardId)
+-    .order('sort_order', { ascending: true });
+-
+-  if (videos && videos.length > 0) {
+-    redirect(`/learn/video/${videos[0].id}`);
++  const [{ data: videos }, { data: ebooks }] = await Promise.all([
++    adminClient
++      .from('videos')
++      .select('id, title, description, thumbnail_url, sort_order, video_resources(title)')
++      .eq('board_id', boardId)
++      .order('sort_order', { ascending: true }),
++    adminClient
++      .from('e_books')
++      .select('id, title, thumbnail_url, download_url, format, price, sort_order')
++      .eq('board_id', boardId)
++      .order('sort_order', { ascending: true }),
++  ]);
++
++  const hasVideos = videos && videos.length > 0;
++  const hasEbooks = ebooks && ebooks.length > 0;
++
++  if (!hasVideos && !hasEbooks) {
++    // Published leaf board with nothing attached yet.
++    return (
++      <div className="min-h-screen bg-vault-950">
++        <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref="/learn" />
++        <main className="mx-auto max-w-6xl px-6 py-16 text-center">
++          <p className="text-sm text-ink-dim">This board doesn&apos;t have any content yet.</p>
++        </main>
++      </div>
++    );
+   }
+ 
+-  // Published leaf board with nothing attached yet.
+   return (
+     <div className="min-h-screen bg-vault-950">
+       <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref="/learn" />
+-      <main className="mx-auto max-w-6xl px-6 py-16 text-center">
+-        <p className="text-sm text-ink-dim">This board doesn&apos;t have any content yet.</p>
++      <main className="mx-auto max-w-6xl px-6 py-10">
++        <h1 className="font-display text-2xl font-semibold text-ink">{board.title}</h1>
++        {board.description && (
++          <p className="mt-2 max-w-2xl text-sm text-ink-dim">{board.description}</p>
++        )}
++
++        {hasVideos && (
++          <>
++            <p className="mt-8 font-mono text-[11px] uppercase tracking-widest text-ink-faint">
++              {videos!.length} {videos!.length === 1 ? 'class' : 'classes'} available
++            </p>
++            <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
++              {videos!.map((v, i) => (
++                <VideoCard
++                  key={v.id}
++                  href={`/learn/video/${v.id}`}
++                  partLabel={`#${i + 1}`}
++                  title={v.title}
++                  description={v.description}
++                  thumbnailUrl={v.thumbnail_url}
++                  resourceLabels={(v.video_resources ?? []).map((r: { title: string }) => r.title)}
++                />
++              ))}
++            </div>
++          </>
++        )}
++
++        {hasEbooks && (
++          <>
++            <p className="mt-10 font-mono text-[11px] uppercase tracking-widest text-ink-faint">
++              E-Books
++            </p>
++            <div className="mt-4 grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
++              {ebooks!.map((eb) => (
++                <EBookCard
++                  key={eb.id}
++                  title={eb.title}
++                  thumbnailUrl={eb.thumbnail_url}
++                  downloadUrl={eb.download_url}
++                  format={eb.format}
++                  price={Number(eb.price)}
++                />
++              ))}
++            </div>
++          </>
++        )}
+       </main>
+     </div>
+   );
+diff --git a/components/EBookCard.tsx b/components/EBookCard.tsx
+new file mode 100644
+index 0000000..77bb319
+--- /dev/null
++++ b/components/EBookCard.tsx
+@@ -0,0 +1,51 @@
++export function EBookCard({
++  title,
++  thumbnailUrl,
++  downloadUrl,
++  format,
++  price,
++}: {
++  title: string;
++  thumbnailUrl?: string | null;
++  downloadUrl?: string | null;
++  format: string;
++  price: number;
++}) {
++  return (
++    <div className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 transition hover:border-signal/60 hover:shadow-glow">
++      <div className="relative aspect-[3/4] w-full overflow-hidden bg-vault-800">
++        {thumbnailUrl ? (
++          // eslint-disable-next-line @next/next/no-img-element
++          <img src={thumbnailUrl} alt="" className="h-full w-full object-cover" />
++        ) : (
++          <div className="flex h-full w-full items-center justify-center bg-scanlines">
++            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
++              No cover
++            </span>
++          </div>
++        )}
++        <span className="absolute right-2 top-2 rounded bg-vault-950/80 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-signal-glow">
++          {format}
++        </span>
++      </div>
++      <div className="p-4">
++        <h3 className="font-display text-sm font-medium text-ink line-clamp-2">{title}</h3>
++        <p className="mt-1 text-xs font-medium text-ok">{price > 0 ? `৳${price}` : 'Free'}</p>
++
++        {downloadUrl ? (
++          <a
++            href={downloadUrl}
++            target="_blank"
++            rel="noopener noreferrer"
++            className="mt-4 flex items-center justify-center gap-2 rounded-lg bg-signal px-4 py-2.5 text-sm font-medium text-white transition hover:bg-signal-glow"
++          >
++            <span aria-hidden>⬇</span>
++            Download
++          </a>
++        ) : (
++          <p className="mt-4 text-center text-xs text-ink-faint">No download link yet</p>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --git a/components/VideoCard.tsx b/components/VideoCard.tsx
+new file mode 100644
+index 0000000..5bf6f10
+--- /dev/null
++++ b/components/VideoCard.tsx
+@@ -0,0 +1,66 @@
++import Link from 'next/link';
++
++export function VideoCard({
++  href,
++  partLabel,
++  title,
++  description,
++  thumbnailUrl,
++  resourceLabels,
++}: {
++  href: string;
++  partLabel: string;
++  title: string;
++  description?: string | null;
++  thumbnailUrl?: string | null;
++  resourceLabels?: string[];
++}) {
++  return (
++    <div className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 transition hover:border-signal/60 hover:shadow-glow">
++      <Link href={href} className="group relative block aspect-video w-full overflow-hidden bg-vault-800">
++        {thumbnailUrl ? (
++          // eslint-disable-next-line @next/next/no-img-element
++          <img
++            src={thumbnailUrl}
++            alt=""
++            className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
++          />
++        ) : (
++          <div className="flex h-full w-full items-center justify-center bg-scanlines">
++            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
++              No preview
++            </span>
++          </div>
++        )}
++        <span className="absolute left-2 top-2 rounded bg-vault-950/80 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-signal-glow">
++          {partLabel}
++        </span>
++      </Link>
++      <div className="p-4">
++        <h3 className="font-display text-sm font-medium text-ink line-clamp-1">{title}</h3>
++        {description && <p className="mt-1 text-xs text-ink-dim line-clamp-2">{description}</p>}
++
++        {resourceLabels && resourceLabels.length > 0 && (
++          <div className="mt-3 flex flex-wrap gap-1.5">
++            {resourceLabels.map((label) => (
++              <span
++                key={label}
++                className="rounded-full border border-vault-border px-2 py-0.5 font-mono text-[10px] text-ink-dim"
++              >
++                📄 {label}
++              </span>
++            ))}
++          </div>
++        )}
++
++        <Link
++          href={href}
++          className="mt-4 flex items-center justify-center gap-2 rounded-lg bg-signal px-4 py-2.5 text-sm font-medium text-white transition hover:bg-signal-glow"
++        >
++          <span aria-hidden>▶</span>
++          Watch Now
++        </Link>
++      </div>
++    </div>
++  );
++}
+diff --git a/lib/validation.ts b/lib/validation.ts
+index f8b9c57..35f2309 100644
+--- a/lib/validation.ts
++++ b/lib/validation.ts
+@@ -22,6 +22,8 @@ const safeUrl = z
+   .max(2048)
+   .refine((val) => val.startsWith('https://'), 'URL must use https');
+ 
++export const boardTypeSchema = z.enum(['normal', 'routine']);
++
+ export const boardSchema = z.object({
+   parent_id: z.string().uuid().nullable().optional(),
+   title: z.string().trim().min(1).max(200),
+@@ -30,6 +32,11 @@ export const boardSchema = z.object({
+   sort_order: z.number().int().min(0).max(100000).default(0),
+   published: z.boolean().default(false),
+   destination_page_id: z.string().uuid().nullable().optional(),
++  // 'routine' boards skip the normal board/video hierarchy entirely and
++  // just display routine_image_url (a class routine / timetable graphic,
++  // 16:9) alongside the title and description.
++  board_type: boardTypeSchema.default('normal'),
++  routine_image_url: safeUrl.optional().nullable(),
+ });
+ 
+ export const boardUpdateSchema = boardSchema.partial();
+@@ -75,4 +82,23 @@ export const videoResourceSchema = z.object({
+   sort_order: z.number().int().min(0).max(100000).default(0),
+ });
+ 
++// A downloadable e-book attached to a board (chapter/subject). Deliberately
++// separate from video_resources: e-books are their own browsable section
++// on a board's page, with a price (almost always 0 / "Free") rather than
++// being a link attached to a specific class.
++export const eBookSchema = z.object({
++  board_id: z.string().uuid(),
++  title: z.string().trim().min(1).max(200),
++  description: z.string().trim().max(2000).optional().nullable(),
++  thumbnail_url: safeUrl.optional().nullable(),
++  download_url: safeUrl.optional().nullable(),
++  format: z.string().trim().min(1).max(40).default('PDF'),
++  price: z.number().min(0).max(1000000).default(0),
++  sort_order: z.number().int().min(0).max(100000).default(0),
++});
++
++export const eBookUpdateSchema = eBookSchema.partial().extend({
++  board_id: z.string().uuid().optional(),
++});
++
+ export const uuidSchema = z.string().uuid();
+diff --git a/supabase/migrations/0001_videos_sort_order_download_url.sql b/supabase/migrations/0001_videos_sort_order_download_url.sql
+new file mode 100644
+index 0000000..c113d6c
+--- /dev/null
++++ b/supabase/migrations/0001_videos_sort_order_download_url.sql
+@@ -0,0 +1,33 @@
++-- Existing databases: `schema.sql` uses `create table if not exists`, so
++-- re-running it after a column was added to an already-created table does
++-- NOT add the new column, and it does NOT drop constraints that were
++-- since removed from the CREATE TABLE definition either.
++--
++-- sort_order and download_url were added to public.videos after some
++-- projects had already run an earlier version of schema.sql, causing
++-- inserts from the admin "Add class" form to fail with a Postgres
++-- "column does not exist" error (surfaced to the admin panel as the
++-- generic "Could not create video.").
++--
++-- Separately, public.videos originally had `board_id uuid unique`
++-- (one video per board). That was later relaxed to allow multiple
++-- classes ("Part 1", "Part 2", ...) per board, ordered by sort_order.
++-- Any project whose DB was created before that change still has the
++-- old auto-named unique constraint (videos_board_id_key) sitting on
++-- the live table, which causes the SECOND class added to any board to
++-- fail with the same generic "Could not create video." error even
++-- after sort_order/download_url exist.
++--
++-- Run this file (once) against any existing project to bring it in
++-- sync with the current schema.sql. Safe to run multiple times.
++
++alter table public.videos
++  add column if not exists sort_order integer not null default 0;
++
++alter table public.videos
++  add column if not exists download_url text;
++
++create index if not exists idx_videos_board_sort on public.videos (board_id, sort_order);
++
++alter table public.videos
++  drop constraint if exists videos_board_id_key;
+diff --git a/supabase/migrations/0002_ebooks_and_routines.sql b/supabase/migrations/0002_ebooks_and_routines.sql
+new file mode 100644
+index 0000000..986869d
+--- /dev/null
++++ b/supabase/migrations/0002_ebooks_and_routines.sql
+@@ -0,0 +1,37 @@
++-- Adds: (1) an e_books table — a downloadable-books section on a board's
++-- page, alongside its classes; (2) board_type + routine_image_url on
++-- boards, so a board can be marked 'routine' and just display a class
++-- routine / timetable image (16:9) instead of the normal board/video
++-- hierarchy.
++--
++-- Run this once against any existing project (SQL Editor, or
++-- `supabase db push`). Safe to run multiple times.
++
++alter table public.boards
++  add column if not exists board_type text not null default 'normal'
++  check (board_type in ('normal', 'routine'));
++
++alter table public.boards
++  add column if not exists routine_image_url text;
++
++create table if not exists public.e_books (
++  id uuid primary key default gen_random_uuid(),
++  board_id uuid not null references public.boards (id) on delete cascade,
++  title text not null,
++  description text,
++  thumbnail_url text,
++  download_url text,
++  format text not null default 'PDF',
++  price numeric(10, 2) not null default 0,
++  sort_order integer not null default 0,
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now()
++);
++
++create index if not exists idx_e_books_board_sort on public.e_books (board_id, sort_order);
++
++alter table public.e_books enable row level security;
++
++drop policy if exists e_books_admin_all on public.e_books;
++create policy e_books_admin_all on public.e_books
++  for all using (public.is_admin()) with check (public.is_admin());
+diff --git a/supabase/schema.sql b/supabase/schema.sql
+index 955a82c..5635be5 100644
+--- a/supabase/schema.sql
++++ b/supabase/schema.sql
+@@ -36,6 +36,10 @@ create table if not exists public.boards (
+   thumbnail_url text,
+   sort_order integer not null default 0,
+   published boolean not null default false,
++  -- 'routine' boards skip the board/video hierarchy entirely and just
++  -- display routine_image_url (a class routine / timetable graphic).
++  board_type text not null default 'normal' check (board_type in ('normal', 'routine')),
++  routine_image_url text,
+   created_at timestamptz not null default now(),
+   updated_at timestamptz not null default now()
+ );
+@@ -148,6 +152,31 @@ create table if not exists public.video_resources (
+ 
+ create index if not exists idx_video_resources_video on public.video_resources (video_id, sort_order);
+ 
++-- ---------------------------------------------------------------------------
++-- 8. e_books — downloadable books attached to a board (chapter/subject),
++--    shown as their own section on that board's page. price is almost
++--    always 0 ("Free"); kept numeric rather than boolean in case a paid
++--    e-book is ever added. Same access model as video_resources: no
++--    regular-user SELECT policy — reached via the admin client only,
++--    after the board page's normal auth + published check already
++--    passed (see app/learn/board/[id]/page.tsx).
++-- ---------------------------------------------------------------------------
++create table if not exists public.e_books (
++  id uuid primary key default gen_random_uuid(),
++  board_id uuid not null references public.boards (id) on delete cascade,
++  title text not null,
++  description text,
++  thumbnail_url text,
++  download_url text,
++  format text not null default 'PDF',
++  price numeric(10, 2) not null default 0,
++  sort_order integer not null default 0,
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now()
++);
++
++create index if not exists idx_e_books_board_sort on public.e_books (board_id, sort_order);
++
+ -- ============================================================================
+ -- ROW LEVEL SECURITY
+ -- ============================================================================
+@@ -160,6 +189,7 @@ alter table public.videos enable row level security;
+ alter table public.audit_logs enable row level security;
+ alter table public.video_playback_tokens enable row level security;
+ alter table public.video_resources enable row level security;
++alter table public.e_books enable row level security;
+ 
+ -- Helper: is the currently authenticated user an ACTIVE authorized user?
+ create or replace function public.is_authorized() returns boolean as $$
+@@ -239,6 +269,13 @@ drop policy if exists video_resources_admin_all on public.video_resources;
+ create policy video_resources_admin_all on public.video_resources
+   for all using (public.is_admin()) with check (public.is_admin());
+ 
++-- e_books: same reasoning as video_resources — no regular-user SELECT
++-- policy. The board page reaches these through the admin client only
++-- after its own auth + board-published check already passed.
++drop policy if exists e_books_admin_all on public.e_books;
++create policy e_books_admin_all on public.e_books
++  for all using (public.is_admin()) with check (public.is_admin());
++
+ -- audit_logs: admins can read; inserts happen via service-role from
+ -- trusted server code only (no client-facing insert policy).
+ drop policy if exists audit_logs_admin_select on public.audit_logs;
