@@ -12,6 +12,7 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
   const auth = await getAuth();
   if (auth.state === 'UNAUTHENTICATED') redirect('/login');
   if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
+  if (auth.state === 'DEVICE_BLOCKED') redirect('/login?error=device_blocked');
 
   const parsedId = uuidSchema.safeParse(params.id);
   if (!parsedId.success) notFound();

@@ -1,0 +1,1198 @@
+diff --git a/app/admin/layout.tsx b/app/admin/layout.tsx
+index 40dfbf1..1a949d1 100644
+--- a/app/admin/layout.tsx
++++ b/app/admin/layout.tsx
+@@ -9,6 +9,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
+ 
+   if (auth.state === 'UNAUTHENTICATED') redirect('/login');
+   if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
++  if (auth.state === 'DEVICE_BLOCKED') redirect('/login?error=device_blocked');
+   // This is the actual gate — being an authorized USER is not enough.
+   // Every admin page and every /api/admin/* route re-checks this
+   // independently; nothing here is inherited or cached client-side.
+diff --git a/app/admin/users/[id]/page.tsx b/app/admin/users/[id]/page.tsx
+new file mode 100644
+index 0000000..02d05ca
+--- /dev/null
++++ b/app/admin/users/[id]/page.tsx
+@@ -0,0 +1,240 @@
++'use client';
++
++import Link from 'next/link';
++import { useEffect, useState } from 'react';
++import { useParams } from 'next/navigation';
++
++type ApprovedDevice = {
++  id: string;
++  ip_address: string;
++  device_label: string;
++  note: string | null;
++  created_at: string;
++};
++
++type Sighting = {
++  id: string;
++  ip_address: string;
++  device_label: string;
++  first_seen: string;
++  last_seen: string;
++  sighting_count: number;
++};
++
++type UserRow = {
++  id: string;
++  email: string;
++  role: 'USER' | 'ADMIN';
++  status: 'ACTIVE' | 'DISABLED';
++  restrict_devices: boolean;
++};
++
++export default function UserDevicesPage() {
++  const params = useParams<{ id: string }>();
++  const userId = params.id;
++
++  const [user, setUser] = useState<UserRow | null>(null);
++  const [approved, setApproved] = useState<ApprovedDevice[]>([]);
++  const [sightings, setSightings] = useState<Sighting[]>([]);
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState<string | null>(null);
++  const [busy, setBusy] = useState<string | null>(null);
++  const [savingRestrict, setSavingRestrict] = useState(false);
++
++  async function load() {
++    setLoading(true);
++    const [usersRes, devicesRes] = await Promise.all([
++      fetch('/api/admin/users'),
++      fetch(`/api/admin/users/${userId}/devices`),
++    ]);
++    const usersData = await usersRes.json();
++    const devicesData = await devicesRes.json();
++    if (usersRes.ok) {
++      const found = (usersData.users as UserRow[]).find((u) => u.id === userId);
++      setUser(found ?? null);
++    }
++    if (devicesRes.ok) {
++      setApproved(devicesData.approved);
++      setSightings(devicesData.sightings);
++    }
++    setLoading(false);
++  }
++
++  useEffect(() => {
++    if (userId) load();
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [userId]);
++
++  async function toggleRestrict() {
++    if (!user) return;
++    setSavingRestrict(true);
++    setError(null);
++    const res = await fetch(`/api/admin/users/${userId}`, {
++      method: 'PATCH',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ restrict_devices: !user.restrict_devices }),
++    });
++    const data = await res.json();
++    if (!res.ok) {
++      setError(data.error ?? 'Could not update.');
++    } else {
++      setUser({ ...user, restrict_devices: !user.restrict_devices });
++    }
++    setSavingRestrict(false);
++  }
++
++  async function approve(ip: string, label: string) {
++    setBusy(`${ip}|${label}`);
++    setError(null);
++    const res = await fetch(`/api/admin/users/${userId}/devices`, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ ip_address: ip, device_label: label }),
++    });
++    const data = await res.json();
++    if (!res.ok) setError(data.error ?? 'Could not approve device.');
++    setBusy(null);
++    load();
++  }
++
++  async function revoke(deviceId: string) {
++    setBusy(deviceId);
++    setError(null);
++    const res = await fetch(`/api/admin/users/${userId}/devices/${deviceId}`, {
++      method: 'DELETE',
++    });
++    const data = await res.json();
++    if (!res.ok) setError(data.error ?? 'Could not revoke device.');
++    setBusy(null);
++    load();
++  }
++
++  const isApproved = (ip: string, label: string) =>
++    approved.some((a) => a.ip_address === ip && a.device_label === label);
++
++  return (
++    <div>
++      <Link href="/admin/users" className="font-mono text-[11px] uppercase tracking-widest text-ink-dim transition hover:text-ink">
++        ← Users
++      </Link>
++      <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">Admin</p>
++      <h1 className="mt-2 font-display text-2xl font-semibold text-ink">
++        {loading ? 'Loading…' : user?.email ?? 'User'}
++      </h1>
++      <p className="mt-2 max-w-2xl text-sm text-ink-dim">
++        Control which IP address + device combos this account is allowed to sign in from. IP +
++        browser/OS is a practical proxy for "device" — browsers don't expose real hardware
++        model info to websites, so this can't distinguish two people on the exact same network
++        and browser. Combined with the heartbeat check during video playback, this is enough to
++        stop most account-sharing in practice.
++      </p>
++
++      {!loading && user && (
++        <div className="glass-panel mt-6 flex items-center justify-between rounded-xl p-5">
++          <div>
++            <p className="text-sm font-medium text-ink">Restrict to approved devices</p>
++            <p className="mt-1 text-xs text-ink-dim">
++              {user.restrict_devices
++                ? 'Only IP + device combos approved below will work for this account.'
++                : 'Off — this account can sign in from anywhere. Approve at least one device below before turning this on.'}
++            </p>
++          </div>
++          <button
++            onClick={toggleRestrict}
++            disabled={savingRestrict}
++            className={`shrink-0 rounded-full px-4 py-2 text-xs font-medium transition disabled:opacity-60 ${
++              user.restrict_devices
++                ? 'bg-signal text-white hover:bg-signal-glow'
++                : 'border border-vault-border bg-white/60 text-ink-dim hover:text-ink'
++            }`}
++          >
++            {user.restrict_devices ? 'Restriction ON' : 'Restriction OFF'}
++          </button>
++        </div>
++      )}
++
++      {error && <p className="mt-3 text-xs text-danger">{error}</p>}
++
++      <div className="mt-8">
++        <p className="font-mono text-[11px] uppercase tracking-widest text-ink-faint">
++          Approved devices ({approved.length})
++        </p>
++        {approved.length === 0 ? (
++          <p className="mt-3 rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
++            No approved devices yet.
++          </p>
++        ) : (
++          <div className="mt-3 space-y-2">
++            {approved.map((d) => (
++              <div
++                key={d.id}
++                className="flex items-center justify-between rounded-xl border border-vault-border bg-vault-900 px-4 py-3 backdrop-blur-xl"
++              >
++                <div>
++                  <p className="text-sm text-ink">{d.device_label}</p>
++                  <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
++                    {d.ip_address}
++                  </p>
++                </div>
++                <button
++                  disabled={busy === d.id}
++                  onClick={() => revoke(d.id)}
++                  className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
++                >
++                  Revoke
++                </button>
++              </div>
++            ))}
++          </div>
++        )}
++      </div>
++
++      <div className="mt-8">
++        <p className="font-mono text-[11px] uppercase tracking-widest text-ink-faint">
++          Recently seen (last {sightings.length})
++        </p>
++        {loading ? (
++          <p className="mt-3 text-sm text-ink-faint">Loading…</p>
++        ) : sightings.length === 0 ? (
++          <p className="mt-3 rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
++            No sign-ins recorded yet for this account.
++          </p>
++        ) : (
++          <div className="mt-3 space-y-2">
++            {sightings.map((s) => {
++              const key = `${s.ip_address}|${s.device_label}`;
++              const approvedAlready = isApproved(s.ip_address, s.device_label);
++              return (
++                <div
++                  key={s.id}
++                  className="flex items-center justify-between rounded-xl border border-vault-border bg-vault-900 px-4 py-3 backdrop-blur-xl"
++                >
++                  <div>
++                    <p className="text-sm text-ink">{s.device_label}</p>
++                    <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
++                      {s.ip_address} · seen {s.sighting_count}× · last{' '}
++                      {new Date(s.last_seen).toLocaleString()}
++                    </p>
++                  </div>
++                  {approvedAlready ? (
++                    <span className="rounded-full border border-ok/30 bg-ok/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-ok">
++                      Approved
++                    </span>
++                  ) : (
++                    <button
++                      disabled={busy === key}
++                      onClick={() => approve(s.ip_address, s.device_label)}
++                      className="rounded-md bg-signal px-3 py-1.5 text-xs font-medium text-white transition hover:bg-signal-glow disabled:opacity-50"
++                    >
++                      Approve
++                    </button>
++                  )}
++                </div>
++              );
++            })}
++          </div>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --git a/app/admin/users/page.tsx b/app/admin/users/page.tsx
+index 64a1a1e..cd8606b 100644
+--- a/app/admin/users/page.tsx
++++ b/app/admin/users/page.tsx
+@@ -1,5 +1,6 @@
+ 'use client';
+ 
++import Link from 'next/link';
+ import { useEffect, useState } from 'react';
+ 
+ type AuthorizedUser = {
+@@ -7,6 +8,7 @@ type AuthorizedUser = {
+   email: string;
+   role: 'USER' | 'ADMIN';
+   status: 'ACTIVE' | 'DISABLED';
++  restrict_devices: boolean;
+   created_at: string;
+ };
+ 
+@@ -157,9 +159,20 @@ export default function AdminUsersPage() {
+                     >
+                       {u.status}
+                     </span>
++                    {u.restrict_devices && (
++                      <span className="ml-2 rounded-full border border-signal/30 bg-signal/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-signal">
++                        Restricted
++                      </span>
++                    )}
+                   </td>
+                   <td className="px-4 py-3">
+                     <div className="flex justify-end gap-2">
++                      <Link
++                        href={`/admin/users/${u.id}`}
++                        className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
++                      >
++                        Devices
++                      </Link>
+                       <button
+                         disabled={busyId === u.id}
+                         onClick={() =>
+diff --git a/app/api/admin/users/[id]/devices/[deviceId]/route.ts b/app/api/admin/users/[id]/devices/[deviceId]/route.ts
+new file mode 100644
+index 0000000..dd7cec9
+--- /dev/null
++++ b/app/api/admin/users/[id]/devices/[deviceId]/route.ts
+@@ -0,0 +1,37 @@
++import { NextResponse, type NextRequest } from 'next/server';
++import { requireAdmin } from '@/lib/auth';
++import { createSupabaseAdminClient } from '@/lib/supabase/admin';
++import { uuidSchema } from '@/lib/validation';
++import { logAuditEvent } from '@/lib/audit';
++
++export const dynamic = 'force-dynamic';
++
++export async function DELETE(
++  _req: NextRequest,
++  { params }: { params: { id: string; deviceId: string } }
++) {
++  const auth = await requireAdmin();
++  if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++
++  const parsedUserId = uuidSchema.safeParse(params.id);
++  const parsedDeviceId = uuidSchema.safeParse(params.deviceId);
++  if (!parsedUserId.success || !parsedDeviceId.success) {
++    return NextResponse.json({ error: 'Invalid id.' }, { status: 400 });
++  }
++
++  const adminClient = createSupabaseAdminClient();
++  const { error } = await adminClient
++    .from('user_devices')
++    .delete()
++    .eq('id', parsedDeviceId.data)
++    .eq('user_id', parsedUserId.data);
++
++  if (error) return NextResponse.json({ error: 'Could not revoke device.' }, { status: 400 });
++
++  await logAuditEvent('ADMIN_ACTION', auth.user.email, parsedUserId.data, {
++    action: 'DEVICE_REVOKED',
++    device_id: parsedDeviceId.data,
++  });
++
++  return NextResponse.json({ ok: true });
++}
+diff --git a/app/api/admin/users/[id]/devices/route.ts b/app/api/admin/users/[id]/devices/route.ts
+new file mode 100644
+index 0000000..42cc876
+--- /dev/null
++++ b/app/api/admin/users/[id]/devices/route.ts
+@@ -0,0 +1,71 @@
++import { NextResponse, type NextRequest } from 'next/server';
++import { requireAdmin } from '@/lib/auth';
++import { createSupabaseAdminClient } from '@/lib/supabase/admin';
++import { deviceApprovalSchema, uuidSchema } from '@/lib/validation';
++import { checkRateLimit } from '@/lib/rateLimit';
++import { logAuditEvent } from '@/lib/audit';
++
++export const dynamic = 'force-dynamic';
++
++// user_devices / device_sightings have no SELECT policy for anyone but
++// admins (see supabase/schema.sql) — read through the admin client,
++// consistent with videos/e_books.
++export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
++  const auth = await requireAdmin();
++  if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++
++  const parsedId = uuidSchema.safeParse(params.id);
++  if (!parsedId.success) return NextResponse.json({ error: 'Invalid id.' }, { status: 400 });
++
++  const adminClient = createSupabaseAdminClient();
++  const [{ data: approved }, { data: sightings }] = await Promise.all([
++    adminClient
++      .from('user_devices')
++      .select('id, ip_address, device_label, note, created_at')
++      .eq('user_id', parsedId.data)
++      .order('created_at', { ascending: false }),
++    adminClient
++      .from('device_sightings')
++      .select('id, ip_address, device_label, first_seen, last_seen, sighting_count')
++      .eq('user_id', parsedId.data)
++      .order('last_seen', { ascending: false })
++      .limit(20),
++  ]);
++
++  return NextResponse.json({ approved: approved ?? [], sightings: sightings ?? [] });
++}
++
++export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
++  const auth = await requireAdmin();
++  if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++
++  const rl = checkRateLimit(`admin_mutate:${auth.user.email}`, 30, 60_000);
++  if (!rl.allowed) return NextResponse.json({ error: 'Too many requests.' }, { status: 429 });
++
++  const parsedId = uuidSchema.safeParse(params.id);
++  if (!parsedId.success) return NextResponse.json({ error: 'Invalid id.' }, { status: 400 });
++
++  const body = await request.json().catch(() => null);
++  const parsed = deviceApprovalSchema.safeParse(body);
++  if (!parsed.success) return NextResponse.json({ error: 'Invalid input.' }, { status: 400 });
++
++  const adminClient = createSupabaseAdminClient();
++  const { data, error } = await adminClient
++    .from('user_devices')
++    .upsert(
++      { user_id: parsedId.data, ip_address: parsed.data.ip_address, device_label: parsed.data.device_label },
++      { onConflict: 'user_id,ip_address,device_label' }
++    )
++    .select('id')
++    .single();
++
++  if (error) return NextResponse.json({ error: 'Could not approve device.' }, { status: 400 });
++
++  await logAuditEvent('ADMIN_ACTION', auth.user.email, parsedId.data, {
++    action: 'DEVICE_APPROVED',
++    ip_address: parsed.data.ip_address,
++    device_label: parsed.data.device_label,
++  });
++
++  return NextResponse.json({ device: data }, { status: 201 });
++}
+diff --git a/app/api/admin/users/route.ts b/app/api/admin/users/route.ts
+index 9672218..ef09aa3 100644
+--- a/app/api/admin/users/route.ts
++++ b/app/api/admin/users/route.ts
+@@ -14,7 +14,7 @@ export async function GET() {
+   const supabase = createSupabaseServerClient();
+   const { data, error } = await supabase
+     .from('authorized_users')
+-    .select('id, email, role, status, created_at, updated_at')
++    .select('id, email, role, status, restrict_devices, created_at, updated_at')
+     .order('created_at', { ascending: false });
+ 
+   if (error) return NextResponse.json({ error: 'Something went wrong.' }, { status: 500 });
+diff --git a/app/learn/board/[id]/page.tsx b/app/learn/board/[id]/page.tsx
+index 24fc159..1df274e 100644
+--- a/app/learn/board/[id]/page.tsx
++++ b/app/learn/board/[id]/page.tsx
+@@ -14,6 +14,7 @@ export default async function BoardPage({ params }: { params: { id: string } })
+   const auth = await getAuth();
+   if (auth.state === 'UNAUTHENTICATED') redirect('/login');
+   if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
++  if (auth.state === 'DEVICE_BLOCKED') redirect('/login?error=device_blocked');
+ 
+   // Validate the ID shape before it ever touches a query — malformed IDs
+   // (IDOR probing, injection attempts) are rejected immediately.
+diff --git a/app/learn/ebooks/page.tsx b/app/learn/ebooks/page.tsx
+index 418b515..d5deb7a 100644
+--- a/app/learn/ebooks/page.tsx
++++ b/app/learn/ebooks/page.tsx
+@@ -20,6 +20,7 @@ export default async function EBooksPage() {
+   const auth = await getAuth();
+   if (auth.state === 'UNAUTHENTICATED') redirect('/login');
+   if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
++  if (auth.state === 'DEVICE_BLOCKED') redirect('/login?error=device_blocked');
+ 
+   // e_books has no public SELECT policy (see supabase/schema.sql) — same
+   // reasoning as videos, so this reads through the admin client. The
+diff --git a/app/learn/page.tsx b/app/learn/page.tsx
+index 325a4de..d66d0aa 100644
+--- a/app/learn/page.tsx
++++ b/app/learn/page.tsx
+@@ -11,6 +11,7 @@ export default async function LearnPage() {
+ 
+   if (auth.state === 'UNAUTHENTICATED') redirect('/login');
+   if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
++  if (auth.state === 'DEVICE_BLOCKED') redirect('/login?error=device_blocked');
+ 
+   const supabase = createSupabaseServerClient();
+ 
+diff --git a/app/learn/routines/page.tsx b/app/learn/routines/page.tsx
+index b9d4022..884ff2e 100644
+--- a/app/learn/routines/page.tsx
++++ b/app/learn/routines/page.tsx
+@@ -9,6 +9,7 @@ export default async function RoutinesPage() {
+   const auth = await getAuth();
+   if (auth.state === 'UNAUTHENTICATED') redirect('/login');
+   if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
++  if (auth.state === 'DEVICE_BLOCKED') redirect('/login?error=device_blocked');
+ 
+   // boards IS directly readable by any authorized user for published rows
+   // (see boards_select_authorized in supabase/schema.sql) — no admin
+diff --git a/app/learn/video/[id]/page.tsx b/app/learn/video/[id]/page.tsx
+index 31be98f..285288d 100644
+--- a/app/learn/video/[id]/page.tsx
++++ b/app/learn/video/[id]/page.tsx
+@@ -12,6 +12,7 @@ export default async function VideoPage({ params }: { params: { id: string } })
+   const auth = await getAuth();
+   if (auth.state === 'UNAUTHENTICATED') redirect('/login');
+   if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
++  if (auth.state === 'DEVICE_BLOCKED') redirect('/login?error=device_blocked');
+ 
+   const parsedId = uuidSchema.safeParse(params.id);
+   if (!parsedId.success) notFound();
+diff --git a/app/login/page.tsx b/app/login/page.tsx
+index 79eecc3..9ab73ef 100644
+--- a/app/login/page.tsx
++++ b/app/login/page.tsx
+@@ -14,7 +14,10 @@ export default async function LoginPage({
+ 
+   return (
+     <div className="flex min-h-screen items-center justify-center bg-vault-950 bg-grid bg-[size:32px_32px] px-6">
+-      <LoginCard accessDenied={searchParams.error === 'access_denied'} />
++      <LoginCard
++        accessDenied={searchParams.error === 'access_denied'}
++        deviceBlocked={searchParams.error === 'device_blocked'}
++      />
+     </div>
+   );
+ }
+diff --git a/components/LoginCard.tsx b/components/LoginCard.tsx
+index 2a272c2..322c68a 100644
+--- a/components/LoginCard.tsx
++++ b/components/LoginCard.tsx
+@@ -5,7 +5,13 @@ import Image from 'next/image';
+ import { useState } from 'react';
+ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+ 
+-export function LoginCard({ accessDenied }: { accessDenied: boolean }) {
++export function LoginCard({
++  accessDenied,
++  deviceBlocked,
++}: {
++  accessDenied: boolean;
++  deviceBlocked?: boolean;
++}) {
+   const [loading, setLoading] = useState(false);
+   const [oauthError, setOauthError] = useState<string | null>(null);
+ 
+@@ -71,6 +77,18 @@ export function LoginCard({ accessDenied }: { accessDenied: boolean }) {
+             </div>
+           )}
+ 
++          {deviceBlocked && (
++            <div className="mb-5 rounded-xl border border-danger/25 bg-danger/5 px-4 py-3 text-left backdrop-blur-sm">
++              <p className="font-mono text-[11px] uppercase tracking-widest text-danger">
++                Device not approved
++              </p>
++              <p className="mt-1 text-xs text-ink-dim">
++                This account only works from approved devices. Ask your administrator to
++                approve this device, or sign in from an approved one.
++              </p>
++            </div>
++          )}
++
+           <button
+             onClick={handleSignIn}
+             disabled={loading}
+diff --git a/components/VideoPlayer.tsx b/components/VideoPlayer.tsx
+index f1a535e..24a5f67 100644
+--- a/components/VideoPlayer.tsx
++++ b/components/VideoPlayer.tsx
+@@ -1,18 +1,68 @@
+ 'use client';
+ 
+-import { useEffect, useState } from 'react';
++import Script from 'next/script';
++import { useCallback, useEffect, useRef, useState } from 'react';
++
++declare global {
++  interface Window {
++    playerjs?: {
++      Player: new (iframe: HTMLIFrameElement) => PlayerJsInstance;
++    };
++  }
++}
++
++type PlayerJsInstance = {
++  on: (event: string, cb: (data?: unknown) => void) => void;
++  play: () => void;
++  pause: () => void;
++  getCurrentTime: (cb: (seconds: number) => void) => void;
++  setCurrentTime: (seconds: number) => void;
++  getDuration: (cb: (seconds: number) => void) => void;
++  // Not part of the documented player.js/Bunny spec — calling it is a
++  // harmless no-op if unsupported, so it's used as a best-effort "try it,
++  // don't rely on it" call. See the space-hold handler below.
++  setPlaybackRate?: (rate: number) => void;
++};
++
++const SEEK_SECONDS = 10;
++const HOLD_THRESHOLD_MS = 320;
++const HEARTBEAT_MS = 4 * 60 * 1000; // well inside the ~10-minute token expiry
+ 
+ export function VideoPlayer({ videoId }: { videoId: string }) {
+   const [url, setUrl] = useState<string | null>(null);
+   const [error, setError] = useState<string | null>(null);
+   const [loading, setLoading] = useState(true);
++  const [revoked, setRevoked] = useState(false);
++  const [playerJsReady, setPlayerJsReady] = useState(false);
++  const [hint, setHint] = useState<string | null>(null);
++
++  const containerRef = useRef<HTMLDivElement>(null);
++  const iframeRef = useRef<HTMLIFrameElement>(null);
++  const playerRef = useRef<PlayerJsInstance | null>(null);
++  const isPlayingRef = useRef(false);
++  const spaceDownRef = useRef(false);
++  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
++  const holdingFastRef = useRef(false);
++  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
++
++  const fetchPlaybackUrl = useCallback(async (): Promise<boolean> => {
++    try {
++      const res = await fetch(`/api/video/${videoId}/play`, { method: 'POST' });
++      const data = await res.json();
++      if (!res.ok) throw new Error(data.error ?? 'Playback unavailable.');
++      return true;
++    } catch {
++      return false;
++    }
++  }, [videoId]);
+ 
++  // Initial load.
+   useEffect(() => {
+     let cancelled = false;
+-
+-    async function fetchPlaybackUrl() {
+-      setLoading(true);
+-      setError(null);
++    setLoading(true);
++    setError(null);
++    setRevoked(false);
++    (async () => {
+       try {
+         const res = await fetch(`/api/video/${videoId}/play`, { method: 'POST' });
+         const data = await res.json();
+@@ -23,16 +73,155 @@ export function VideoPlayer({ videoId }: { videoId: string }) {
+       } finally {
+         if (!cancelled) setLoading(false);
+       }
+-    }
+-
+-    fetchPlaybackUrl();
++    })();
+     return () => {
+       cancelled = true;
+     };
+   }, [videoId]);
+ 
++  // Heartbeat: re-checks authorization in the background while the tab
++  // stays open, WITHOUT touching the already-loaded iframe on success (so
++  // playback is never interrupted for a still-valid session). Only acts
++  // on failure — e.g. an admin just revoked this device/IP, or disabled
++  // the account — by stopping playback immediately instead of leaving an
++  // already-open tab playing indefinitely until it's refreshed.
++  useEffect(() => {
++    if (!url) return;
++    const interval = setInterval(async () => {
++      const ok = await fetchPlaybackUrl();
++      if (!ok) {
++        setRevoked(true);
++        setUrl(null);
++      }
++    }, HEARTBEAT_MS);
++    return () => clearInterval(interval);
++  }, [url, fetchPlaybackUrl]);
++
++  // Wire up player.js once both the library and the iframe exist.
++  useEffect(() => {
++    if (!playerJsReady || !url || !iframeRef.current || !window.playerjs) return;
++    const player = new window.playerjs.Player(iframeRef.current);
++    playerRef.current = player;
++    player.on('ready', () => {
++      player.on('play', () => {
++        isPlayingRef.current = true;
++      });
++      player.on('pause', () => {
++        isPlayingRef.current = false;
++      });
++    });
++    return () => {
++      playerRef.current = null;
++    };
++  }, [playerJsReady, url]);
++
++  function showHint(text: string) {
++    setHint(text);
++    if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
++    hintTimerRef.current = setTimeout(() => setHint(null), 650);
++  }
++
++  function seek(deltaSeconds: number) {
++    const player = playerRef.current;
++    if (!player) return;
++    player.getCurrentTime((current) => {
++      player.setCurrentTime(Math.max(0, current + deltaSeconds));
++    });
++    showHint(deltaSeconds > 0 ? `+${deltaSeconds}s` : `${deltaSeconds}s`);
++  }
++
++  function toggleFullscreen() {
++    // Deliberately NOT part of player.js — fullscreening the wrapping
++    // element is a plain browser API and works regardless of what the
++    // embedded (cross-origin) player itself supports.
++    const el = containerRef.current;
++    if (!el) return;
++    if (document.fullscreenElement) {
++      document.exitFullscreen();
++    } else {
++      el.requestFullscreen?.();
++    }
++  }
++
++  function togglePlayPause() {
++    const player = playerRef.current;
++    if (!player) return;
++    if (isPlayingRef.current) {
++      player.pause();
++      showHint('Paused');
++    } else {
++      player.play();
++      showHint('Playing');
++    }
++  }
++
++  useEffect(() => {
++    function isTypingTarget(target: EventTarget | null) {
++      const el = target as HTMLElement | null;
++      if (!el) return false;
++      const tag = el.tagName;
++      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
++    }
++
++    function onKeyDown(e: KeyboardEvent) {
++      if (isTypingTarget(e.target) || !playerRef.current) return;
++
++      if (e.code === 'ArrowRight') {
++        e.preventDefault();
++        seek(SEEK_SECONDS);
++      } else if (e.code === 'ArrowLeft') {
++        e.preventDefault();
++        seek(-SEEK_SECONDS);
++      } else if (e.key.toLowerCase() === 'f') {
++        e.preventDefault();
++        toggleFullscreen();
++      } else if (e.code === 'Space') {
++        e.preventDefault();
++        if (spaceDownRef.current) return; // ignore OS key-repeat
++        spaceDownRef.current = true;
++        holdTimerRef.current = setTimeout(() => {
++          // Held past the threshold: switch to fast playback instead of
++          // toggling play/pause. Best-effort — see PlayerJsInstance note.
++          holdingFastRef.current = true;
++          playerRef.current?.setPlaybackRate?.(2);
++          showHint('2×');
++        }, HOLD_THRESHOLD_MS);
++      }
++    }
++
++    function onKeyUp(e: KeyboardEvent) {
++      if (e.code !== 'Space') return;
++      if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
++      spaceDownRef.current = false;
++
++      if (holdingFastRef.current) {
++        holdingFastRef.current = false;
++        playerRef.current?.setPlaybackRate?.(1);
++        showHint('1×');
++      } else if (playerRef.current) {
++        togglePlayPause();
++      }
++    }
++
++    window.addEventListener('keydown', onKeyDown);
++    window.addEventListener('keyup', onKeyUp);
++    return () => {
++      window.removeEventListener('keydown', onKeyDown);
++      window.removeEventListener('keyup', onKeyUp);
++      if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
++      if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
++    };
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, []);
++
+   return (
+-    <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-800">
++    <div ref={containerRef} className="group relative aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-800">
++      <Script
++        src="https://assets.mediadelivery.net/playerjs/playerjs-latest.min.js"
++        strategy="afterInteractive"
++        onLoad={() => setPlayerJsReady(true)}
++      />
++
+       {loading && (
+         <div className="absolute inset-0 flex items-center justify-center">
+           <span className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+@@ -40,14 +229,26 @@ export function VideoPlayer({ videoId }: { videoId: string }) {
+           </span>
+         </div>
+       )}
+-      {error && !loading && (
+-        <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
++
++      {revoked && !loading && (
++        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-vault-950/90 px-6 text-center backdrop-blur-sm">
+           <span className="font-mono text-xs uppercase tracking-widest text-danger">
+-            {error}
++            Access revoked
+           </span>
++          <p className="max-w-xs text-xs text-ink-dim">
++            This session is no longer authorized to play this class. Reload the page if you
++            believe this is a mistake.
++          </p>
+         </div>
+       )}
+-      {url && !loading && !error && (
++
++      {error && !loading && !revoked && (
++        <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
++          <span className="font-mono text-xs uppercase tracking-widest text-danger">{error}</span>
++        </div>
++      )}
++
++      {url && !loading && !error && !revoked && (
+         // Bunny Stream embed with a signed, ~10-minute token (see
+         // /api/video/[id]/play). Fetched fresh per session — never a
+         // permanent link, never present in page source or any board-list
+@@ -56,6 +257,7 @@ export function VideoPlayer({ videoId }: { videoId: string }) {
+         // Bunny's "Allowed Referrers" restriction is what stops a copied
+         // link from being reusable elsewhere, not concealment.
+         <iframe
++          ref={iframeRef}
+           src={url}
+           loading="lazy"
+           allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;"
+@@ -63,6 +265,18 @@ export function VideoPlayer({ videoId }: { videoId: string }) {
+           className="h-full w-full border-0"
+         />
+       )}
++
++      {hint && (
++        <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-vault-950/80 px-4 py-2 font-mono text-sm text-white shadow-glass backdrop-blur-sm">
++          {hint}
++        </div>
++      )}
++
++      {url && !loading && !error && !revoked && (
++        <div className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-vault-950/70 px-2.5 py-1 font-mono text-[9px] uppercase tracking-widest text-white/70 opacity-0 backdrop-blur-sm transition group-hover:opacity-100">
++          ←/→ 10s · Space play/pause (hold 2×) · F fullscreen
++        </div>
++      )}
+     </div>
+   );
+ }
+diff --git a/lib/auth.ts b/lib/auth.ts
+index a5571b7..05482b0 100644
+--- a/lib/auth.ts
++++ b/lib/auth.ts
+@@ -1,18 +1,57 @@
+ import 'server-only';
+ import { createSupabaseServerClient } from '@/lib/supabase/server';
++import { createSupabaseAdminClient } from '@/lib/supabase/admin';
++import { getClientIp, getDeviceLabel } from '@/lib/requestInfo';
+ 
+ export type AuthorizedUser = {
+   id: string;
+   email: string;
+   role: 'USER' | 'ADMIN';
+   status: 'ACTIVE' | 'DISABLED';
++  restrict_devices: boolean;
+ };
+ 
+ export type AuthResult =
+   | { state: 'UNAUTHENTICATED' }
+   | { state: 'UNAUTHORIZED'; email: string }
++  | { state: 'DEVICE_BLOCKED'; email: string; ip: string; deviceLabel: string }
+   | { state: 'AUTHORIZED'; email: string; user: AuthorizedUser };
+ 
++/**
++ * Fire-and-forget upsert of "this user was just seen from this IP +
++ * device". Recorded for EVERY authorized request, regardless of whether
++ * restrict_devices is on, so an admin reviewing a suspicious account has
++ * real history to approve from instead of a blank list. Never blocks or
++ * throws into the caller.
++ */
++async function recordDeviceSighting(userId: string, ip: string, deviceLabel: string) {
++  try {
++    const adminClient = createSupabaseAdminClient();
++    const { data: existing } = await adminClient
++      .from('device_sightings')
++      .select('id, sighting_count')
++      .eq('user_id', userId)
++      .eq('ip_address', ip)
++      .eq('device_label', deviceLabel)
++      .maybeSingle();
++
++    if (existing) {
++      await adminClient
++        .from('device_sightings')
++        .update({ last_seen: new Date().toISOString(), sighting_count: existing.sighting_count + 1 })
++        .eq('id', existing.id);
++    } else {
++      await adminClient.from('device_sightings').insert({
++        user_id: userId,
++        ip_address: ip,
++        device_label: deviceLabel,
++      });
++    }
++  } catch (err) {
++    console.error('[auth] failed to record device sighting', err);
++  }
++}
++
+ /**
+  * THE security boundary. Every protected Server Component and Route
+  * Handler must call this and branch on the result before touching any
+@@ -20,6 +59,13 @@ export type AuthResult =
+  *  - the session itself is re-validated against Supabase Auth (server-side)
+  *  - the email is looked up in authorized_users through RLS, which only
+  *    lets the caller see their own row (see supabase/schema.sql)
++ *  - if that account has restrict_devices on, the request's IP + coarse
++ *    device label (see lib/requestInfo.ts) must match a row an admin
++ *    explicitly approved in user_devices — this is what stops one
++ *    account being shared across many people's devices at once (see
++ *    app/admin/users/[id]/page.tsx and components/VideoPlayer.tsx's
++ *    heartbeat, which re-runs this check periodically during playback so
++ *    an already-open tab gets cut off too, not just future page loads)
+  *
+  * A user reaching this point with a valid session but no ACTIVE row in
+  * authorized_users is UNAUTHORIZED, full stop — regardless of anything
+@@ -39,7 +85,7 @@ export async function getAuth(): Promise<AuthResult> {
+ 
+   const { data: authorizedUser } = await supabase
+     .from('authorized_users')
+-    .select('id, email, role, status')
++    .select('id, email, role, status, restrict_devices')
+     .eq('email', user.email.toLowerCase())
+     .maybeSingle();
+ 
+@@ -47,10 +93,34 @@ export async function getAuth(): Promise<AuthResult> {
+     return { state: 'UNAUTHORIZED', email: user.email };
+   }
+ 
++  const typedUser = authorizedUser as AuthorizedUser;
++  const ip = getClientIp();
++  const deviceLabel = getDeviceLabel();
++
++  // Always record the sighting — even when not currently restricted —
++  // so the admin panel has data to approve from the moment restriction
++  // is turned on, not after.
++  void recordDeviceSighting(typedUser.id, ip, deviceLabel);
++
++  if (typedUser.restrict_devices) {
++    const adminClient = createSupabaseAdminClient();
++    const { data: approved } = await adminClient
++      .from('user_devices')
++      .select('id')
++      .eq('user_id', typedUser.id)
++      .eq('ip_address', ip)
++      .eq('device_label', deviceLabel)
++      .maybeSingle();
++
++    if (!approved) {
++      return { state: 'DEVICE_BLOCKED', email: user.email, ip, deviceLabel };
++    }
++  }
++
+   return {
+     state: 'AUTHORIZED',
+     email: user.email,
+-    user: authorizedUser as AuthorizedUser,
++    user: typedUser,
+   };
+ }
+ 
+@@ -61,6 +131,7 @@ export async function requireAuthorized(): Promise<
+   const auth = await getAuth();
+   if (auth.state === 'UNAUTHENTICATED') return { ok: false, status: 401 };
+   if (auth.state === 'UNAUTHORIZED') return { ok: false, status: 403 };
++  if (auth.state === 'DEVICE_BLOCKED') return { ok: false, status: 403 };
+   return { ok: true, user: auth.user };
+ }
+ 
+diff --git a/lib/requestInfo.ts b/lib/requestInfo.ts
+new file mode 100644
+index 0000000..58cb19c
+--- /dev/null
++++ b/lib/requestInfo.ts
+@@ -0,0 +1,58 @@
++import 'server-only';
++import { headers } from 'next/headers';
++
++/**
++ * Best-effort client IP. On Vercel, x-forwarded-for carries the real
++ * client IP as the first entry (Vercel's edge appends its own hops after
++ * it). This is not spoof-proof against a client who controls their own
++ * proxy chain in unusual setups, but it's what every reverse-proxy-based
++ * IP allowlist relies on in practice.
++ */
++export function getClientIp(): string {
++  const h = headers();
++  const forwardedFor = h.get('x-forwarded-for');
++  if (forwardedFor) {
++    const first = forwardedFor.split(',')[0]?.trim();
++    if (first) return first;
++  }
++  const realIp = h.get('x-real-ip');
++  if (realIp) return realIp;
++  return 'unknown';
++}
++
++/**
++ * A coarse "device" label derived from the User-Agent header: OS +
++ * browser family (e.g. "Windows · Chrome", "Android · Chrome").
++ *
++ * IMPORTANT: this is NOT a hardware device model. Modern browsers
++ * deliberately no longer expose that (Chrome's User-Agent Reduction,
++ * Safari, etc. all limit it for privacy reasons) — there is no reliable,
++ * spoof-resistant way to read "iPhone 14" vs "iPhone 13" from a plain web
++ * request. Combined with IP address, this label is a practical proxy for
++ * "which browser install on which network", which is enough to tell two
++ * different people apart in the vast majority of real sharing cases.
++ */
++export function getDeviceLabel(): string {
++  const ua = headers().get('user-agent') ?? '';
++  return parseDeviceLabel(ua);
++}
++
++export function parseDeviceLabel(ua: string): string {
++  if (!ua) return 'Unknown device';
++
++  let os = 'Unknown OS';
++  if (/windows/i.test(ua)) os = 'Windows';
++  else if (/iphone|ipad|ipod/i.test(ua)) os = 'iOS';
++  else if (/mac os x/i.test(ua)) os = 'macOS';
++  else if (/android/i.test(ua)) os = 'Android';
++  else if (/linux/i.test(ua)) os = 'Linux';
++
++  let browser = 'Unknown browser';
++  if (/edg\//i.test(ua)) browser = 'Edge';
++  else if (/chrome\//i.test(ua) && !/edg\//i.test(ua) && !/opr\//i.test(ua)) browser = 'Chrome';
++  else if (/opr\//i.test(ua)) browser = 'Opera';
++  else if (/firefox\//i.test(ua)) browser = 'Firefox';
++  else if (/safari\//i.test(ua) && !/chrome\//i.test(ua)) browser = 'Safari';
++
++  return `${os} · ${browser}`;
++}
+diff --git a/lib/validation.ts b/lib/validation.ts
+index 35f2309..b7851ab 100644
+--- a/lib/validation.ts
++++ b/lib/validation.ts
+@@ -13,6 +13,12 @@ export const addAuthorizedUserSchema = z.object({
+ export const updateAuthorizedUserSchema = z.object({
+   role: roleSchema.optional(),
+   status: statusSchema.optional(),
++  restrict_devices: z.boolean().optional(),
++});
++
++export const deviceApprovalSchema = z.object({
++  ip_address: z.string().trim().min(1).max(64),
++  device_label: z.string().trim().min(1).max(80),
+ });
+ 
+ const safeUrl = z
+diff --git a/supabase/migrations/0003_device_restrictions.sql b/supabase/migrations/0003_device_restrictions.sql
+new file mode 100644
+index 0000000..cb9c858
+--- /dev/null
++++ b/supabase/migrations/0003_device_restrictions.sql
+@@ -0,0 +1,49 @@
++-- Adds per-account IP + device allowlisting.
++--
++-- authorized_users.restrict_devices (default false) is the per-account
++-- switch. When true, a request must match a row in user_devices (exact
++-- ip_address + device_label) for that user, or it's treated as
++-- unauthorized (see lib/auth.ts). device_sightings records every combo
++-- seen for every user regardless of the switch, so an admin has real
++-- data to review before turning it on.
++--
++-- Run this once against any existing project. Safe to run multiple times.
++
++alter table public.authorized_users
++  add column if not exists restrict_devices boolean not null default false;
++
++create table if not exists public.user_devices (
++  id uuid primary key default gen_random_uuid(),
++  user_id uuid not null references public.authorized_users (id) on delete cascade,
++  ip_address text not null,
++  device_label text not null default 'Any device',
++  note text,
++  created_at timestamptz not null default now(),
++  unique (user_id, ip_address, device_label)
++);
++
++create index if not exists idx_user_devices_user on public.user_devices (user_id);
++
++create table if not exists public.device_sightings (
++  id uuid primary key default gen_random_uuid(),
++  user_id uuid not null references public.authorized_users (id) on delete cascade,
++  ip_address text not null,
++  device_label text not null default 'Unknown device',
++  first_seen timestamptz not null default now(),
++  last_seen timestamptz not null default now(),
++  sighting_count integer not null default 1,
++  unique (user_id, ip_address, device_label)
++);
++
++create index if not exists idx_device_sightings_user on public.device_sightings (user_id, last_seen desc);
++
++alter table public.user_devices enable row level security;
++alter table public.device_sightings enable row level security;
++
++drop policy if exists user_devices_admin_all on public.user_devices;
++create policy user_devices_admin_all on public.user_devices
++  for all using (public.is_admin()) with check (public.is_admin());
++
++drop policy if exists device_sightings_admin_all on public.device_sightings;
++create policy device_sightings_admin_all on public.device_sightings
++  for all using (public.is_admin()) with check (public.is_admin());
+diff --git a/supabase/schema.sql b/supabase/schema.sql
+index 5635be5..5d26dbe 100644
+--- a/supabase/schema.sql
++++ b/supabase/schema.sql
+@@ -18,6 +18,10 @@ create table if not exists public.authorized_users (
+   email text unique not null,
+   role text not null default 'USER' check (role in ('USER', 'ADMIN')),
+   status text not null default 'ACTIVE' check (status in ('ACTIVE', 'DISABLED')),
++  -- When true, this account may only sign in from an IP + device combo
++  -- that an admin has explicitly approved in user_devices. Default false
++  -- so adding this never locks anyone out until an admin opts an account in.
++  restrict_devices boolean not null default false,
+   created_at timestamptz not null default now(),
+   updated_at timestamptz not null default now()
+ );
+@@ -177,6 +181,48 @@ create table if not exists public.e_books (
+ 
+ create index if not exists idx_e_books_board_sort on public.e_books (board_id, sort_order);
+ 
++-- ---------------------------------------------------------------------------
++-- 9. user_devices — the actual allowlist for accounts with
++--    restrict_devices = true on authorized_users. An admin adds rows here
++--    (normally by "approving" a row from device_sightings below); a
++--    request only passes the device check in lib/auth.ts if BOTH the IP
++--    and device_label of the incoming request match a row here for that
++--    user.
++-- ---------------------------------------------------------------------------
++create table if not exists public.user_devices (
++  id uuid primary key default gen_random_uuid(),
++  user_id uuid not null references public.authorized_users (id) on delete cascade,
++  ip_address text not null,
++  device_label text not null default 'Any device',
++  note text,
++  created_at timestamptz not null default now(),
++  unique (user_id, ip_address, device_label)
++);
++
++create index if not exists idx_user_devices_user on public.user_devices (user_id);
++
++-- ---------------------------------------------------------------------------
++-- 10. device_sightings — every distinct (ip_address, device_label) combo
++--     ever seen for a user, deduped, with a running count and last-seen
++--     time. Recorded on every authorized request regardless of whether
++--     restrict_devices is on, so an admin has real data to review BEFORE
++--     turning restriction on for a suspicious account. One row per combo
++--     (upserted), not a full request log — this is bounded and cheap to
++--     keep, unlike audit_logs.
++-- ---------------------------------------------------------------------------
++create table if not exists public.device_sightings (
++  id uuid primary key default gen_random_uuid(),
++  user_id uuid not null references public.authorized_users (id) on delete cascade,
++  ip_address text not null,
++  device_label text not null default 'Unknown device',
++  first_seen timestamptz not null default now(),
++  last_seen timestamptz not null default now(),
++  sighting_count integer not null default 1,
++  unique (user_id, ip_address, device_label)
++);
++
++create index if not exists idx_device_sightings_user on public.device_sightings (user_id, last_seen desc);
++
+ -- ============================================================================
+ -- ROW LEVEL SECURITY
+ -- ============================================================================
+@@ -190,6 +236,8 @@ alter table public.audit_logs enable row level security;
+ alter table public.video_playback_tokens enable row level security;
+ alter table public.video_resources enable row level security;
+ alter table public.e_books enable row level security;
++alter table public.user_devices enable row level security;
++alter table public.device_sightings enable row level security;
+ 
+ -- Helper: is the currently authenticated user an ACTIVE authorized user?
+ create or replace function public.is_authorized() returns boolean as $$
+@@ -276,6 +324,18 @@ drop policy if exists e_books_admin_all on public.e_books;
+ create policy e_books_admin_all on public.e_books
+   for all using (public.is_admin()) with check (public.is_admin());
+ 
++-- user_devices / device_sightings: admin-only, same as e_books. Read and
++-- written from lib/auth.ts via the service-role admin client (this is a
++-- security-check code path, consistent with how video authorization
++-- already works), and from the admin API routes for the management UI.
++drop policy if exists user_devices_admin_all on public.user_devices;
++create policy user_devices_admin_all on public.user_devices
++  for all using (public.is_admin()) with check (public.is_admin());
++
++drop policy if exists device_sightings_admin_all on public.device_sightings;
++create policy device_sightings_admin_all on public.device_sightings
++  for all using (public.is_admin()) with check (public.is_admin());
++
+ -- audit_logs: admins can read; inserts happen via service-role from
+ -- trusted server code only (no client-facing insert policy).
+ drop policy if exists audit_logs_admin_select on public.audit_logs;

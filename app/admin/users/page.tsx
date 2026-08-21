@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 type AuthorizedUser = {
@@ -7,6 +8,7 @@ type AuthorizedUser = {
   email: string;
   role: 'USER' | 'ADMIN';
   status: 'ACTIVE' | 'DISABLED';
+  restrict_devices: boolean;
   created_at: string;
 };
 
@@ -157,9 +159,20 @@ export default function AdminUsersPage() {
                     >
                       {u.status}
                     </span>
+                    {u.restrict_devices && (
+                      <span className="ml-2 rounded-full border border-signal/30 bg-signal/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-signal">
+                        Restricted
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
+                      <Link
+                        href={`/admin/users/${u.id}`}
+                        className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+                      >
+                        Devices
+                      </Link>
                       <button
                         disabled={busyId === u.id}
                         onClick={() =>

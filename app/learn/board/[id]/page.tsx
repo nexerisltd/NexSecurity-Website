@@ -14,6 +14,7 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
   const auth = await getAuth();
   if (auth.state === 'UNAUTHENTICATED') redirect('/login');
   if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
+  if (auth.state === 'DEVICE_BLOCKED') redirect('/login?error=device_blocked');
 
   // Validate the ID shape before it ever touches a query — malformed IDs
   // (IDOR probing, injection attempts) are rejected immediately.

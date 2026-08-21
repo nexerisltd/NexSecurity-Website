@@ -1,18 +1,68 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import Script from 'next/script';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+declare global {
+  interface Window {
+    playerjs?: {
+      Player: new (iframe: HTMLIFrameElement) => PlayerJsInstance;
+    };
+  }
+}
+
+type PlayerJsInstance = {
+  on: (event: string, cb: (data?: unknown) => void) => void;
+  play: () => void;
+  pause: () => void;
+  getCurrentTime: (cb: (seconds: number) => void) => void;
+  setCurrentTime: (seconds: number) => void;
+  getDuration: (cb: (seconds: number) => void) => void;
+  // Not part of the documented player.js/Bunny spec — calling it is a
+  // harmless no-op if unsupported, so it's used as a best-effort "try it,
+  // don't rely on it" call. See the space-hold handler below.
+  setPlaybackRate?: (rate: number) => void;
+};
+
+const SEEK_SECONDS = 10;
+const HOLD_THRESHOLD_MS = 320;
+const HEARTBEAT_MS = 4 * 60 * 1000; // well inside the ~10-minute token expiry
 
 export function VideoPlayer({ videoId }: { videoId: string }) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [revoked, setRevoked] = useState(false);
+  const [playerJsReady, setPlayerJsReady] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const playerRef = useRef<PlayerJsInstance | null>(null);
+  const isPlayingRef = useRef(false);
+  const spaceDownRef = useRef(false);
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdingFastRef = useRef(false);
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchPlaybackUrl = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/video/${videoId}/play`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Playback unavailable.');
+      return true;
+    } catch {
+      return false;
+    }
+  }, [videoId]);
+
+  // Initial load.
   useEffect(() => {
     let cancelled = false;
-
-    async function fetchPlaybackUrl() {
-      setLoading(true);
-      setError(null);
+    setLoading(true);
+    setError(null);
+    setRevoked(false);
+    (async () => {
       try {
         const res = await fetch(`/api/video/${videoId}/play`, { method: 'POST' });
         const data = await res.json();
@@ -23,16 +73,155 @@ export function VideoPlayer({ videoId }: { videoId: string }) {
       } finally {
         if (!cancelled) setLoading(false);
       }
-    }
-
-    fetchPlaybackUrl();
+    })();
     return () => {
       cancelled = true;
     };
   }, [videoId]);
 
+  // Heartbeat: re-checks authorization in the background while the tab
+  // stays open, WITHOUT touching the already-loaded iframe on success (so
+  // playback is never interrupted for a still-valid session). Only acts
+  // on failure — e.g. an admin just revoked this device/IP, or disabled
+  // the account — by stopping playback immediately instead of leaving an
+  // already-open tab playing indefinitely until it's refreshed.
+  useEffect(() => {
+    if (!url) return;
+    const interval = setInterval(async () => {
+      const ok = await fetchPlaybackUrl();
+      if (!ok) {
+        setRevoked(true);
+        setUrl(null);
+      }
+    }, HEARTBEAT_MS);
+    return () => clearInterval(interval);
+  }, [url, fetchPlaybackUrl]);
+
+  // Wire up player.js once both the library and the iframe exist.
+  useEffect(() => {
+    if (!playerJsReady || !url || !iframeRef.current || !window.playerjs) return;
+    const player = new window.playerjs.Player(iframeRef.current);
+    playerRef.current = player;
+    player.on('ready', () => {
+      player.on('play', () => {
+        isPlayingRef.current = true;
+      });
+      player.on('pause', () => {
+        isPlayingRef.current = false;
+      });
+    });
+    return () => {
+      playerRef.current = null;
+    };
+  }, [playerJsReady, url]);
+
+  function showHint(text: string) {
+    setHint(text);
+    if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    hintTimerRef.current = setTimeout(() => setHint(null), 650);
+  }
+
+  function seek(deltaSeconds: number) {
+    const player = playerRef.current;
+    if (!player) return;
+    player.getCurrentTime((current) => {
+      player.setCurrentTime(Math.max(0, current + deltaSeconds));
+    });
+    showHint(deltaSeconds > 0 ? `+${deltaSeconds}s` : `${deltaSeconds}s`);
+  }
+
+  function toggleFullscreen() {
+    // Deliberately NOT part of player.js — fullscreening the wrapping
+    // element is a plain browser API and works regardless of what the
+    // embedded (cross-origin) player itself supports.
+    const el = containerRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      el.requestFullscreen?.();
+    }
+  }
+
+  function togglePlayPause() {
+    const player = playerRef.current;
+    if (!player) return;
+    if (isPlayingRef.current) {
+      player.pause();
+      showHint('Paused');
+    } else {
+      player.play();
+      showHint('Playing');
+    }
+  }
+
+  useEffect(() => {
+    function isTypingTarget(target: EventTarget | null) {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (isTypingTarget(e.target) || !playerRef.current) return;
+
+      if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        seek(SEEK_SECONDS);
+      } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        seek(-SEEK_SECONDS);
+      } else if (e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        toggleFullscreen();
+      } else if (e.code === 'Space') {
+        e.preventDefault();
+        if (spaceDownRef.current) return; // ignore OS key-repeat
+        spaceDownRef.current = true;
+        holdTimerRef.current = setTimeout(() => {
+          // Held past the threshold: switch to fast playback instead of
+          // toggling play/pause. Best-effort — see PlayerJsInstance note.
+          holdingFastRef.current = true;
+          playerRef.current?.setPlaybackRate?.(2);
+          showHint('2×');
+        }, HOLD_THRESHOLD_MS);
+      }
+    }
+
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code !== 'Space') return;
+      if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
+      spaceDownRef.current = false;
+
+      if (holdingFastRef.current) {
+        holdingFastRef.current = false;
+        playerRef.current?.setPlaybackRate?.(1);
+        showHint('1×');
+      } else if (playerRef.current) {
+        togglePlayPause();
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
+      if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
-    <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-800">
+    <div ref={containerRef} className="group relative aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-800">
+      <Script
+        src="https://assets.mediadelivery.net/playerjs/playerjs-latest.min.js"
+        strategy="afterInteractive"
+        onLoad={() => setPlayerJsReady(true)}
+      />
+
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center">
           <span className="font-mono text-xs uppercase tracking-widest text-ink-faint">
@@ -40,14 +229,26 @@ export function VideoPlayer({ videoId }: { videoId: string }) {
           </span>
         </div>
       )}
-      {error && !loading && (
-        <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
+
+      {revoked && !loading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-vault-950/90 px-6 text-center backdrop-blur-sm">
           <span className="font-mono text-xs uppercase tracking-widest text-danger">
-            {error}
+            Access revoked
           </span>
+          <p className="max-w-xs text-xs text-ink-dim">
+            This session is no longer authorized to play this class. Reload the page if you
+            believe this is a mistake.
+          </p>
         </div>
       )}
-      {url && !loading && !error && (
+
+      {error && !loading && !revoked && (
+        <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
+          <span className="font-mono text-xs uppercase tracking-widest text-danger">{error}</span>
+        </div>
+      )}
+
+      {url && !loading && !error && !revoked && (
         // Bunny Stream embed with a signed, ~10-minute token (see
         // /api/video/[id]/play). Fetched fresh per session — never a
         // permanent link, never present in page source or any board-list
@@ -56,12 +257,25 @@ export function VideoPlayer({ videoId }: { videoId: string }) {
         // Bunny's "Allowed Referrers" restriction is what stops a copied
         // link from being reusable elsewhere, not concealment.
         <iframe
+          ref={iframeRef}
           src={url}
           loading="lazy"
           allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;"
           allowFullScreen
           className="h-full w-full border-0"
         />
+      )}
+
+      {hint && (
+        <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-vault-950/80 px-4 py-2 font-mono text-sm text-white shadow-glass backdrop-blur-sm">
+          {hint}
+        </div>
+      )}
+
+      {url && !loading && !error && !revoked && (
+        <div className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-vault-950/70 px-2.5 py-1 font-mono text-[9px] uppercase tracking-widest text-white/70 opacity-0 backdrop-blur-sm transition group-hover:opacity-100">
+          ←/→ 10s · Space play/pause (hold 2×) · F fullscreen
+        </div>
       )}
     </div>
   );

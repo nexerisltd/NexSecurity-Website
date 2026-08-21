@@ -13,6 +13,12 @@ export const addAuthorizedUserSchema = z.object({
 export const updateAuthorizedUserSchema = z.object({
   role: roleSchema.optional(),
   status: statusSchema.optional(),
+  restrict_devices: z.boolean().optional(),
+});
+
+export const deviceApprovalSchema = z.object({
+  ip_address: z.string().trim().min(1).max(64),
+  device_label: z.string().trim().min(1).max(80),
 });
 
 const safeUrl = z

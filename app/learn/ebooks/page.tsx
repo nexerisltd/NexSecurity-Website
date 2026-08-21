@@ -20,6 +20,7 @@ export default async function EBooksPage() {
   const auth = await getAuth();
   if (auth.state === 'UNAUTHENTICATED') redirect('/login');
   if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
+  if (auth.state === 'DEVICE_BLOCKED') redirect('/login?error=device_blocked');
 
   // e_books has no public SELECT policy (see supabase/schema.sql) — same
   // reasoning as videos, so this reads through the admin client. The

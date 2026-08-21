@@ -11,6 +11,7 @@ export default async function LearnPage() {
 
   if (auth.state === 'UNAUTHENTICATED') redirect('/login');
   if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
+  if (auth.state === 'DEVICE_BLOCKED') redirect('/login?error=device_blocked');
 
   const supabase = createSupabaseServerClient();
 

@@ -14,7 +14,10 @@ export default async function LoginPage({
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-vault-950 bg-grid bg-[size:32px_32px] px-6">
-      <LoginCard accessDenied={searchParams.error === 'access_denied'} />
+      <LoginCard
+        accessDenied={searchParams.error === 'access_denied'}
+        deviceBlocked={searchParams.error === 'device_blocked'}
+      />
     </div>
   );
 }

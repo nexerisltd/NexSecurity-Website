@@ -5,7 +5,13 @@ import Image from 'next/image';
 import { useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
-export function LoginCard({ accessDenied }: { accessDenied: boolean }) {
+export function LoginCard({
+  accessDenied,
+  deviceBlocked,
+}: {
+  accessDenied: boolean;
+  deviceBlocked?: boolean;
+}) {
   const [loading, setLoading] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
 
@@ -67,6 +73,18 @@ export function LoginCard({ accessDenied }: { accessDenied: boolean }) {
               <p className="mt-1 text-xs text-ink-dim">
                 This account isn&apos;t authorized. Contact your administrator if you
                 believe this is a mistake.
+              </p>
+            </div>
+          )}
+
+          {deviceBlocked && (
+            <div className="mb-5 rounded-xl border border-danger/25 bg-danger/5 px-4 py-3 text-left backdrop-blur-sm">
+              <p className="font-mono text-[11px] uppercase tracking-widest text-danger">
+                Device not approved
+              </p>
+              <p className="mt-1 text-xs text-ink-dim">
+                This account only works from approved devices. Ask your administrator to
+                approve this device, or sign in from an approved one.
               </p>
             </div>
           )}

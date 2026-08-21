@@ -18,6 +18,10 @@ create table if not exists public.authorized_users (
   email text unique not null,
   role text not null default 'USER' check (role in ('USER', 'ADMIN')),
   status text not null default 'ACTIVE' check (status in ('ACTIVE', 'DISABLED')),
+  -- When true, this account may only sign in from an IP + device combo
+  -- that an admin has explicitly approved in user_devices. Default false
+  -- so adding this never locks anyone out until an admin opts an account in.
+  restrict_devices boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -177,6 +181,48 @@ create table if not exists public.e_books (
 
 create index if not exists idx_e_books_board_sort on public.e_books (board_id, sort_order);
 
+-- ---------------------------------------------------------------------------
+-- 9. user_devices — the actual allowlist for accounts with
+--    restrict_devices = true on authorized_users. An admin adds rows here
+--    (normally by "approving" a row from device_sightings below); a
+--    request only passes the device check in lib/auth.ts if BOTH the IP
+--    and device_label of the incoming request match a row here for that
+--    user.
+-- ---------------------------------------------------------------------------
+create table if not exists public.user_devices (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.authorized_users (id) on delete cascade,
+  ip_address text not null,
+  device_label text not null default 'Any device',
+  note text,
+  created_at timestamptz not null default now(),
+  unique (user_id, ip_address, device_label)
+);
+
+create index if not exists idx_user_devices_user on public.user_devices (user_id);
+
+-- ---------------------------------------------------------------------------
+-- 10. device_sightings — every distinct (ip_address, device_label) combo
+--     ever seen for a user, deduped, with a running count and last-seen
+--     time. Recorded on every authorized request regardless of whether
+--     restrict_devices is on, so an admin has real data to review BEFORE
+--     turning restriction on for a suspicious account. One row per combo
+--     (upserted), not a full request log — this is bounded and cheap to
+--     keep, unlike audit_logs.
+-- ---------------------------------------------------------------------------
+create table if not exists public.device_sightings (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.authorized_users (id) on delete cascade,
+  ip_address text not null,
+  device_label text not null default 'Unknown device',
+  first_seen timestamptz not null default now(),
+  last_seen timestamptz not null default now(),
+  sighting_count integer not null default 1,
+  unique (user_id, ip_address, device_label)
+);
+
+create index if not exists idx_device_sightings_user on public.device_sightings (user_id, last_seen desc);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ============================================================================
@@ -190,6 +236,8 @@ alter table public.audit_logs enable row level security;
 alter table public.video_playback_tokens enable row level security;
 alter table public.video_resources enable row level security;
 alter table public.e_books enable row level security;
+alter table public.user_devices enable row level security;
+alter table public.device_sightings enable row level security;
 
 -- Helper: is the currently authenticated user an ACTIVE authorized user?
 create or replace function public.is_authorized() returns boolean as $$
@@ -274,6 +322,18 @@ create policy video_resources_admin_all on public.video_resources
 -- after its own auth + board-published check already passed.
 drop policy if exists e_books_admin_all on public.e_books;
 create policy e_books_admin_all on public.e_books
+  for all using (public.is_admin()) with check (public.is_admin());
+
+-- user_devices / device_sightings: admin-only, same as e_books. Read and
+-- written from lib/auth.ts via the service-role admin client (this is a
+-- security-check code path, consistent with how video authorization
+-- already works), and from the admin API routes for the management UI.
+drop policy if exists user_devices_admin_all on public.user_devices;
+create policy user_devices_admin_all on public.user_devices
+  for all using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists device_sightings_admin_all on public.device_sightings;
+create policy device_sightings_admin_all on public.device_sightings
   for all using (public.is_admin()) with check (public.is_admin());
 
 -- audit_logs: admins can read; inserts happen via service-role from

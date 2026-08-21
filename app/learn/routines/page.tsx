@@ -9,6 +9,7 @@ export default async function RoutinesPage() {
   const auth = await getAuth();
   if (auth.state === 'UNAUTHENTICATED') redirect('/login');
   if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
+  if (auth.state === 'DEVICE_BLOCKED') redirect('/login?error=device_blocked');
 
   // boards IS directly readable by any authorized user for published rows
   // (see boards_select_authorized in supabase/schema.sql) — no admin
