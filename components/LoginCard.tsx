@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+import Image from 'next/image';
 import { useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
@@ -31,33 +33,25 @@ export function LoginCard({ accessDenied }: { accessDenied: boolean }) {
 
   return (
     <div className="relative w-full max-w-sm">
-      <div className="relative overflow-hidden rounded-2xl border border-vault-border bg-vault-900 shadow-glow">
-        {/* signature element: a scanning "keycard" strip */}
-        <div className="relative h-24 overflow-hidden border-b border-vault-border bg-vault-800 bg-scanlines">
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-signal-glow to-transparent animate-scan" />
-          <div className="flex h-full items-center justify-between px-6">
-            <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
-              NexSecurity
-            </span>
-            <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink-faint">
-              Vault-01
-            </span>
+      <div className="glass-panel relative overflow-hidden rounded-3xl">
+        <div className="flex flex-col items-center px-8 pt-10">
+          <div className="relative h-20 w-20 overflow-hidden rounded-2xl border border-white/70 bg-white/70 shadow-glass">
+            <Image src="/logo.png" alt="NexSecurity" fill className="object-cover" priority />
           </div>
-        </div>
-
-        <div className="px-8 py-8 text-center">
-          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
+          <p className="mt-5 font-mono text-[11px] uppercase tracking-[0.2em] text-signal">
             Private Learning Space
           </p>
-          <h1 className="mt-3 font-display text-2xl font-semibold text-ink">
+          <h1 className="mt-2 text-center font-display text-2xl font-semibold text-ink">
             Authorized members only
           </h1>
-          <p className="mt-2 text-sm leading-relaxed text-ink-dim">
+          <p className="mt-2 text-center text-sm leading-relaxed text-ink-dim">
             Sign in with the Google account your administrator has granted access to.
           </p>
+        </div>
 
+        <div className="px-8 pb-8 pt-6 text-center">
           {oauthError && (
-            <div className="mt-5 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-left">
+            <div className="mb-5 rounded-xl border border-danger/25 bg-danger/5 px-4 py-3 text-left backdrop-blur-sm">
               <p className="font-mono text-[11px] uppercase tracking-widest text-danger">
                 Sign-in failed
               </p>
@@ -66,7 +60,7 @@ export function LoginCard({ accessDenied }: { accessDenied: boolean }) {
           )}
 
           {accessDenied && (
-            <div className="mt-5 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-left">
+            <div className="mb-5 rounded-xl border border-danger/25 bg-danger/5 px-4 py-3 text-left backdrop-blur-sm">
               <p className="font-mono text-[11px] uppercase tracking-widest text-danger">
                 Access denied
               </p>
@@ -80,13 +74,24 @@ export function LoginCard({ accessDenied }: { accessDenied: boolean }) {
           <button
             onClick={handleSignIn}
             disabled={loading}
-            className="mt-6 flex w-full items-center justify-center gap-3 rounded-lg bg-ink px-5 py-3 text-sm font-medium text-vault-950 transition hover:bg-white disabled:opacity-60"
+            className="flex w-full items-center justify-center gap-3 rounded-xl border border-vault-border bg-white/90 px-5 py-3 text-sm font-medium text-ink shadow-glass transition hover:bg-white disabled:opacity-60"
           >
             <GoogleMark />
             {loading ? 'Redirecting…' : 'Continue with Google'}
           </button>
 
-          <p className="mt-5 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+          <p className="mt-5 text-[11px] leading-relaxed text-ink-faint">
+            By continuing, you agree to our{' '}
+            <Link href="/terms" className="text-signal underline-offset-2 hover:underline">
+              Terms
+            </Link>{' '}
+            and{' '}
+            <Link href="/privacy" className="text-signal underline-offset-2 hover:underline">
+              Privacy Policy
+            </Link>
+            .
+          </p>
+          <p className="mt-3 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
             Session verified server-side · No public content
           </p>
         </div>

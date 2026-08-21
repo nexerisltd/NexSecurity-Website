@@ -135,7 +135,7 @@ export default function AdminVideosPage() {
 
       <form
         onSubmit={createVideo}
-        className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 sm:grid-cols-2"
+        className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 sm:grid-cols-2 backdrop-blur-xl shadow-glass"
       >
         <Field label="Board">
           <select value={boardId} onChange={(e) => setBoardId(e.target.value)} className="input" required>
@@ -215,7 +215,7 @@ export default function AdminVideosPage() {
           </p>
         ) : (
           videos.map((v) => (
-            <div key={v.id} className="overflow-hidden rounded-xl border border-vault-border bg-vault-900">
+            <div key={v.id} className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass">
               <div className="flex items-center justify-between px-4 py-3">
                 <div>
                   <p className="text-sm text-ink">
@@ -404,7 +404,7 @@ function VideoEditPanel({
             {resources.map((r) => (
               <li
                 key={r.id}
-                className="flex items-center justify-between rounded-md border border-vault-border bg-vault-900 px-3 py-2 text-sm"
+                className="flex items-center justify-between rounded-md border border-vault-border bg-vault-900 px-3 py-2 text-sm backdrop-blur-xl shadow-glass"
               >
                 <div className="min-w-0">
                   <span className="text-ink">{r.title}</span>

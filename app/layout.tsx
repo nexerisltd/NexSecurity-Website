@@ -18,6 +18,7 @@ export const metadata: Metadata = {
   title: 'NexSecurity — Private Learning Space',
   description: 'Authorized members only.',
   robots: { index: false, follow: false },
+  icons: { icon: '/logo.png', shortcut: '/logo.png', apple: '/logo.png' },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

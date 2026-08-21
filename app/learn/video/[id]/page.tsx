@@ -99,7 +99,7 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
                   href={r.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-2 rounded-lg border border-vault-border bg-vault-900 px-4 py-2.5 text-sm text-ink transition hover:border-signal hover:text-signal-glow"
+                  className="flex items-center gap-2 rounded-lg border border-vault-border bg-vault-900 px-4 py-2.5 text-sm text-ink transition hover:border-signal hover:text-signal-glow backdrop-blur-xl shadow-glass"
                 >
                   <span aria-hidden>📄</span>
                   {r.title}

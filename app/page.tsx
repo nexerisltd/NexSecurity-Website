@@ -117,7 +117,7 @@ export default function HomePage() {
           {PATHS.map((path) => (
             <div
               key={path.title}
-              className="rounded-xl border border-vault-border bg-vault-900 p-5 transition hover:border-signal/50"
+              className="rounded-xl border border-vault-border bg-vault-900 p-5 transition hover:border-signal/50 backdrop-blur-xl shadow-glass"
             >
               <div className="aspect-video w-full rounded-lg bg-gradient-to-br from-vault-800 to-vault-700" />
               <h3 className="mt-4 font-display text-sm font-medium text-ink">{path.title}</h3>
@@ -201,7 +201,7 @@ export default function HomePage() {
 
 function FaqItem({ q, a }: { q: string; a: string }) {
   return (
-    <div className="rounded-xl border border-vault-border bg-vault-900 p-5">
+    <div className="rounded-xl border border-vault-border bg-vault-900 p-5 backdrop-blur-xl shadow-glass">
       <p className="font-display text-sm font-medium text-ink">{q}</p>
       <p className="mt-2 text-sm leading-relaxed text-ink-dim">{a}</p>
     </div>

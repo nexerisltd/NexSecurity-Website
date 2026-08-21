@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { updateSession } from '@/lib/supabase/middleware';
 
-const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/auth-code-error'];
+const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/auth-code-error', '/privacy', '/terms'];
 
 export async function middleware(request: NextRequest) {
   // Always refresh the session cookie first.

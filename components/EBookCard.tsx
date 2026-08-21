@@ -12,7 +12,7 @@ export function EBookCard({
   price: number;
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 transition hover:border-signal/60 hover:shadow-glow">
+    <div className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 transition hover:border-signal/60 hover:shadow-glow backdrop-blur-xl shadow-glass">
       <div className="relative aspect-[3/4] w-full overflow-hidden bg-vault-800">
         {thumbnailUrl ? (
           // eslint-disable-next-line @next/next/no-img-element

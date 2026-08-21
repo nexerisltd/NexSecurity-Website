@@ -3,7 +3,7 @@ import Link from 'next/link';
 export default function AuthCodeError() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-vault-950 px-6">
-      <div className="w-full max-w-sm rounded-2xl border border-vault-border bg-vault-900 p-8 text-center">
+      <div className="w-full max-w-sm rounded-2xl border border-vault-border bg-vault-900 p-8 text-center backdrop-blur-xl shadow-glass">
         <p className="font-mono text-xs uppercase tracking-widest text-danger">
           SIGN-IN FAILED
         </p>

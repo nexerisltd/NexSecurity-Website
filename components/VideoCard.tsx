@@ -16,7 +16,7 @@ export function VideoCard({
   resourceLabels?: string[];
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 transition hover:border-signal/60 hover:shadow-glow">
+    <div className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 transition hover:border-signal/60 hover:shadow-glow backdrop-blur-xl shadow-glass">
       <Link href={href} className="group relative block aspect-video w-full overflow-hidden bg-vault-800">
         {thumbnailUrl ? (
           // eslint-disable-next-line @next/next/no-img-element

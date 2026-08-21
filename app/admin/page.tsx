@@ -18,7 +18,7 @@ export default async function AdminOverview() {
         <StatCard label="Boards" value={boardCount ?? 0} />
       </div>
 
-      <div className="mt-10 rounded-xl border border-vault-border bg-vault-900 p-6">
+      <div className="mt-10 rounded-xl border border-vault-border bg-vault-900 p-6 backdrop-blur-xl shadow-glass">
         <p className="font-mono text-[11px] uppercase tracking-widest text-ink-faint">
           Reminder
         </p>
@@ -33,7 +33,7 @@ export default async function AdminOverview() {
 
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-vault-border bg-vault-900 p-5">
+    <div className="rounded-xl border border-vault-border bg-vault-900 p-5 backdrop-blur-xl shadow-glass">
       <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">{label}</p>
       <p className="mt-2 font-display text-3xl font-semibold text-ink">{value}</p>
     </div>

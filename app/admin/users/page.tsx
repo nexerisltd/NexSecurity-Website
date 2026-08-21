@@ -79,7 +79,7 @@ export default function AdminUsersPage() {
 
       <form
         onSubmit={addUser}
-        className="mt-6 flex flex-wrap items-end gap-3 rounded-xl border border-vault-border bg-vault-900 p-5"
+        className="mt-6 flex flex-wrap items-end gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 backdrop-blur-xl shadow-glass"
       >
         <div className="min-w-[220px] flex-1">
           <label className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">

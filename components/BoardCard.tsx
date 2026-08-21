@@ -14,7 +14,7 @@ export function BoardCard({
   return (
     <Link
       href={href}
-      className="group relative block overflow-hidden rounded-xl border border-vault-border bg-vault-900 transition hover:border-signal/60 hover:shadow-glow"
+      className="group relative block overflow-hidden rounded-xl border border-vault-border bg-vault-900 transition hover:border-signal/60 hover:shadow-glow backdrop-blur-xl shadow-glass"
     >
       <div className="relative aspect-video w-full overflow-hidden bg-vault-800">
         {thumbnailUrl ? (

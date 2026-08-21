@@ -3,39 +3,67 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 html,
 body {
-  background-color: #08090b;
-  color: #f2f3f5;
+  background-color: #eef2fb;
+  color: #101828;
 }
 
 body {
   font-feature-settings: 'ss01' on, 'ss02' on;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Liquid Glass background: soft, blurred color blobs fixed behind every
+   page, the way Fluent/"liquid glass" surfaces get their depth from what's
+   blurred underneath them rather than from a flat color. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(600px circle at 8% 8%, rgba(61, 110, 255, 0.16), transparent 60%),
+    radial-gradient(500px circle at 92% 18%, rgba(110, 150, 255, 0.14), transparent 55%),
+    radial-gradient(700px circle at 50% 100%, rgba(150, 120, 255, 0.12), transparent 60%),
+    linear-gradient(180deg, #f5f8ff 0%, #eef2fb 100%);
 }
 
 @layer components {
   .input {
-    @apply w-full rounded-md border border-vault-border bg-vault-800 px-3 py-2 text-sm text-ink outline-none transition focus:border-signal;
+    @apply w-full rounded-lg border border-vault-border bg-white/70 px-3 py-2 text-sm text-ink outline-none backdrop-blur-sm transition placeholder:text-ink-faint focus:border-signal focus:bg-white/90 focus:shadow-glow;
+  }
+
+  /* Reusable Fluent/liquid-glass panel: translucent surface, blurred
+     backdrop, soft depth shadow, thin light-catching border. */
+  .glass-panel {
+    @apply border border-white/60 bg-white/60 backdrop-blur-xl shadow-glass;
+  }
+
+  .glass-panel-solid {
+    @apply border border-white/70 bg-white/80 backdrop-blur-xl shadow-glass;
   }
 }
 
 ::selection {
-  background: rgba(91, 108, 255, 0.35);
+  background: rgba(61, 110, 255, 0.22);
 }
 
 :focus-visible {
-  outline: 2px solid #5b6cff;
+  outline: 2px solid #3d6eff;
   outline-offset: 2px;
 }
 
 .bg-scanlines {
   background-image: repeating-linear-gradient(
     to bottom,
-    rgba(255, 255, 255, 0.025) 0px,
-    rgba(255, 255, 255, 0.025) 1px,
+    rgba(16, 24, 40, 0.02) 0px,
+    rgba(16, 24, 40, 0.02) 1px,
     transparent 1px,
     transparent 3px
   );

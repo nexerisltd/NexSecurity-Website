@@ -18,7 +18,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     <div className="min-h-screen bg-vault-950">
       <TopNav email={auth.email} isAdmin backHref="/learn" />
       <div className="mx-auto flex max-w-6xl gap-8 px-6 py-10">
-        <nav className="w-44 shrink-0 space-y-1">
+        <nav className="glass-panel h-fit w-44 shrink-0 space-y-1 rounded-2xl p-2">
           <AdminNavLink href="/admin" label="Overview" />
           <AdminNavLink href="/admin/users" label="Users" />
           <AdminNavLink href="/admin/boards" label="Boards" />
@@ -35,7 +35,7 @@ function AdminNavLink({ href, label }: { href: string; label: string }) {
   return (
     <a
       href={href}
-      className="block rounded-md px-3 py-2 font-mono text-xs uppercase tracking-widest text-ink-dim transition hover:bg-vault-800 hover:text-ink"
+      className="block rounded-lg px-3 py-2 font-mono text-xs uppercase tracking-widest text-ink-dim transition hover:bg-white/70 hover:text-ink"
     >
       {label}
     </a>

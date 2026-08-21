@@ -105,7 +105,7 @@ export default function AdminEBooksPage() {
 
       <form
         onSubmit={createEBook}
-        className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 sm:grid-cols-2"
+        className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 sm:grid-cols-2 backdrop-blur-xl shadow-glass"
       >
         <Field label="Board">
           <select required value={boardId} onChange={(e) => setBoardId(e.target.value)} className="input">
@@ -190,7 +190,7 @@ export default function AdminEBooksPage() {
           ebooks.map((eb) => (
             <div
               key={eb.id}
-              className="flex items-center justify-between rounded-xl border border-vault-border bg-vault-900 px-4 py-3"
+              className="flex items-center justify-between rounded-xl border border-vault-border bg-vault-900 px-4 py-3 backdrop-blur-xl shadow-glass"
             >
               <div className="flex items-center gap-3">
                 {eb.thumbnail_url ? (

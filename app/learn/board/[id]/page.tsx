@@ -49,7 +49,7 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
           {board.description && (
             <p className="mt-2 max-w-2xl text-sm text-ink-dim">{board.description}</p>
           )}
-          <div className="mt-6 aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-900">
+          <div className="mt-6 aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass">
             {board.routine_image_url ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={board.routine_image_url} alt={board.title} className="h-full w-full object-contain" />

@@ -107,7 +107,7 @@ export default function AdminBoardsPage() {
 
       <form
         onSubmit={createBoard}
-        className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 sm:grid-cols-2"
+        className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 sm:grid-cols-2 backdrop-blur-xl shadow-glass"
       >
         <Field label="Title">
           <input
@@ -177,7 +177,7 @@ export default function AdminBoardsPage() {
           </p>
         ) : (
           boards.map((b) => (
-            <div key={b.id} className="overflow-hidden rounded-xl border border-vault-border bg-vault-900">
+            <div key={b.id} className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass">
               <div className="flex items-center justify-between px-4 py-3">
                 <div>
                   <p className="text-sm text-ink">{b.title}</p>
