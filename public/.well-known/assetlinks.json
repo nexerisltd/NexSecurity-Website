@@ -3,9 +3,9 @@
     "relation": ["delegate_permission/common.handle_all_urls"],
     "target": {
       "namespace": "android_app",
-      "package_name": "com.nexsecurity.app",
+      "package_name": "com.nexapp.nexsecurity",
       "sha256_cert_fingerprints": [
-        "REPLACE_WITH_YOUR_APK_SHA256_FINGERPRINT"
+        "3D:C1:3A:6D:89:6F:B6:3C:7E:A6:6C:3F:94:CC:C0:0E:14:A2:2B:C6:65:30:82:FA:56:13:57:D4:B2:D8:9E:9B"
       ]
     }
   }
