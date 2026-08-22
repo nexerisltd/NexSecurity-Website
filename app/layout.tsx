@@ -20,6 +20,8 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
   icons: { icon: '/logo.png', shortcut: '/logo.png', apple: '/logo.png' },
   verification: { google: '7VfuwzozReuUwaodd5kmJAMF9HbifQWHX0aU-EUfpYg' },
+  manifest: '/manifest.json',
+  themeColor: '#0a0a0a',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
