@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { uuidSchema } from '@/lib/validation';
 import { TopNav } from '@/components/TopNav';
 import { VideoPlayer } from '@/components/VideoPlayer';
+import { VideoDownloadButton } from '@/components/VideoDownloadButton';
 import { PartsList } from '@/components/PartsList';
 
 export const dynamic = 'force-dynamic';
@@ -75,17 +76,7 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
               <p className="mt-2 text-sm leading-relaxed text-ink-dim">{video.description}</p>
             )}
           </div>
-          {video.download_url && (
-            <a
-              href={video.download_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex shrink-0 items-center gap-2 rounded-lg bg-signal px-4 py-2.5 text-sm font-medium text-white transition hover:bg-signal-glow"
-            >
-              <span aria-hidden>⬇</span>
-              Download
-            </a>
-          )}
+          <VideoDownloadButton videoId={video.id} fallbackUrl={video.download_url} />
         </div>
 
         {resources.length > 0 && (

@@ -1,0 +1,363 @@
+diff --git a/app/api/video/[id]/download/route.ts b/app/api/video/[id]/download/route.ts
+new file mode 100644
+index 0000000..7fbb60e
+--- /dev/null
++++ b/app/api/video/[id]/download/route.ts
+@@ -0,0 +1,109 @@
++import { NextResponse, type NextRequest } from 'next/server';
++import { requireAuthorized } from '@/lib/auth';
++import { createSupabaseAdminClient } from '@/lib/supabase/admin';
++import { uuidSchema } from '@/lib/validation';
++import { checkRateLimit } from '@/lib/rateLimit';
++import { logAuditEvent } from '@/lib/audit';
++import { bunnyDownloadConfigured, getAvailableResolutions, buildDownloadUrl } from '@/lib/bunny';
++import { z } from 'zod';
++
++export const dynamic = 'force-dynamic';
++
++/**
++ * Same authorization gate as /api/video/[id]/play (must be authenticated,
++ * authorized, and the video's board must be published) — repeated here
++ * rather than shared, because a download link is a bigger leak surface
++ * than a gated iframe embed (it works outside our app entirely once
++ * issued), so this route deliberately re-checks from scratch rather than
++ * trusting anything about how the caller got here.
++ */
++async function authorizeAndLoadVideo(videoId: string, email: string) {
++  const adminClient = createSupabaseAdminClient();
++  const { data: video } = await adminClient
++    .from('videos')
++    .select('id, provider, source_ref, board:board_id(id, published)')
++    .eq('id', videoId)
++    .maybeSingle();
++
++  const board = video?.board as unknown as { id: string; published: boolean } | null;
++  if (!video || !board || !board.published || video.provider !== 'bunny') {
++    await logAuditEvent('VIDEO_ACCESS_DENIED', email, videoId, { reason: 'download_denied' });
++    return null;
++  }
++
++  const [libraryId, bunnyVideoId] = video.source_ref.split('/');
++  if (!libraryId || !bunnyVideoId) return null;
++
++  return { libraryId, bunnyVideoId };
++}
++
++/** Lists which resolutions actually exist for this video, so the frontend
++ * never offers a resolution that would 404. */
++export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
++  const auth = await requireAuthorized();
++  if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++
++  if (!bunnyDownloadConfigured()) {
++    return NextResponse.json({ error: 'Downloads are not configured yet.' }, { status: 503 });
++  }
++
++  const parsedId = uuidSchema.safeParse(params.id);
++  if (!parsedId.success) return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
++
++  const rl = checkRateLimit(`video_download_list:${auth.user.email}`, 20, 60_000);
++  if (!rl.allowed) return NextResponse.json({ error: 'Too many requests.' }, { status: 429 });
++
++  const resolved = await authorizeAndLoadVideo(parsedId.data, auth.user.email);
++  if (!resolved) return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
++
++  const resolutions = await getAvailableResolutions(resolved.libraryId, resolved.bunnyVideoId);
++  return NextResponse.json({ resolutions });
++}
++
++const downloadRequestSchema = z.object({
++  resolution: z.string().trim().regex(/^\d{3,4}p$/, 'Invalid resolution.'),
++});
++
++/** Issues one short-lived signed download URL for exactly the requested,
++ * already-verified-available resolution. */
++export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
++  const auth = await requireAuthorized();
++  if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++
++  if (!bunnyDownloadConfigured()) {
++    return NextResponse.json({ error: 'Downloads are not configured yet.' }, { status: 503 });
++  }
++
++  const parsedId = uuidSchema.safeParse(params.id);
++  if (!parsedId.success) return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
++
++  // Tighter limit than GET — this is what actually mints a working link.
++  const rl = checkRateLimit(`video_download:${auth.user.email}`, 10, 60_000);
++  if (!rl.allowed) {
++    return NextResponse.json({ error: 'Too many download requests. Slow down.' }, { status: 429 });
++  }
++
++  const body = await request.json().catch(() => null);
++  const parsedBody = downloadRequestSchema.safeParse(body);
++  if (!parsedBody.success) return NextResponse.json({ error: 'Invalid input.' }, { status: 400 });
++
++  const resolved = await authorizeAndLoadVideo(parsedId.data, auth.user.email);
++  if (!resolved) return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
++
++  // Re-verify the requested resolution is actually one that exists for
++  // THIS video — never trust the resolution string from the client
++  // beyond format-validation above.
++  const available = await getAvailableResolutions(resolved.libraryId, resolved.bunnyVideoId);
++  if (!available.includes(parsedBody.data.resolution)) {
++    return NextResponse.json({ error: 'That resolution is not available.' }, { status: 400 });
++  }
++
++  const url = buildDownloadUrl(resolved.bunnyVideoId, parsedBody.data.resolution);
++
++  await logAuditEvent('VIDEO_ACCESS_GRANTED', auth.user.email, parsedId.data, {
++    action: 'DOWNLOAD',
++    resolution: parsedBody.data.resolution,
++  });
++
++  return NextResponse.json({ url });
++}
+diff --git a/app/learn/video/[id]/page.tsx b/app/learn/video/[id]/page.tsx
+index 285288d..a1f106e 100644
+--- a/app/learn/video/[id]/page.tsx
++++ b/app/learn/video/[id]/page.tsx
+@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+ import { uuidSchema } from '@/lib/validation';
+ import { TopNav } from '@/components/TopNav';
+ import { VideoPlayer } from '@/components/VideoPlayer';
++import { VideoDownloadButton } from '@/components/VideoDownloadButton';
+ import { PartsList } from '@/components/PartsList';
+ 
+ export const dynamic = 'force-dynamic';
+@@ -75,17 +76,7 @@ export default async function VideoPage({ params }: { params: { id: string } })
+               <p className="mt-2 text-sm leading-relaxed text-ink-dim">{video.description}</p>
+             )}
+           </div>
+-          {video.download_url && (
+-            <a
+-              href={video.download_url}
+-              target="_blank"
+-              rel="noopener noreferrer"
+-              className="flex shrink-0 items-center gap-2 rounded-lg bg-signal px-4 py-2.5 text-sm font-medium text-white transition hover:bg-signal-glow"
+-            >
+-              <span aria-hidden>⬇</span>
+-              Download
+-            </a>
+-          )}
++          <VideoDownloadButton videoId={video.id} fallbackUrl={video.download_url} />
+         </div>
+ 
+         {resources.length > 0 && (
+diff --git a/components/VideoDownloadButton.tsx b/components/VideoDownloadButton.tsx
+new file mode 100644
+index 0000000..cf0b6f2
+--- /dev/null
++++ b/components/VideoDownloadButton.tsx
+@@ -0,0 +1,124 @@
++'use client';
++
++import { useEffect, useRef, useState } from 'react';
++
++export function VideoDownloadButton({
++  videoId,
++  fallbackUrl,
++}: {
++  videoId: string;
++  /** The old admin-pasted static link, used only if dynamic resolution
++   * downloads aren't configured (BUNNY_* env vars) or fail to load. */
++  fallbackUrl?: string | null;
++}) {
++  const [open, setOpen] = useState(false);
++  const [resolutions, setResolutions] = useState<string[] | null>(null);
++  const [failed, setFailed] = useState(false);
++  const [issuing, setIssuing] = useState<string | null>(null);
++  const [error, setError] = useState<string | null>(null);
++  const containerRef = useRef<HTMLDivElement>(null);
++
++  useEffect(() => {
++    function onClickOutside(e: MouseEvent) {
++      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
++        setOpen(false);
++      }
++    }
++    document.addEventListener('mousedown', onClickOutside);
++    return () => document.removeEventListener('mousedown', onClickOutside);
++  }, []);
++
++  async function openMenu() {
++    setOpen((v) => !v);
++    if (resolutions !== null || failed) return; // already loaded (or already gave up)
++    try {
++      const res = await fetch(`/api/video/${videoId}/download`);
++      if (!res.ok) throw new Error();
++      const data = await res.json();
++      setResolutions(data.resolutions ?? []);
++    } catch {
++      setFailed(true);
++    }
++  }
++
++  async function pick(resolution: string) {
++    setIssuing(resolution);
++    setError(null);
++    try {
++      const res = await fetch(`/api/video/${videoId}/download`, {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ resolution }),
++      });
++      const data = await res.json();
++      if (!res.ok) throw new Error(data.error ?? 'Could not generate link.');
++      // Cross-origin CDN link: opening it is the most reliable option —
++      // whether the browser shows it inline or downloads it depends on
++      // the response headers Bunny's pull zone sends for that file, not
++      // on anything this app controls.
++      window.open(data.url, '_blank', 'noopener,noreferrer');
++      setOpen(false);
++    } catch (e) {
++      setError(e instanceof Error ? e.message : 'Could not generate link.');
++    } finally {
++      setIssuing(null);
++    }
++  }
++
++  // Dynamic resolutions never loaded / not configured / genuinely empty
++  // → fall back to the plain static link if the admin set one.
++  const showFallback = (failed || (resolutions !== null && resolutions.length === 0)) && fallbackUrl;
++  if (showFallback) {
++    return (
++      <a
++        href={fallbackUrl!}
++        target="_blank"
++        rel="noopener noreferrer"
++        className="flex shrink-0 items-center gap-2 rounded-lg bg-signal px-4 py-2.5 text-sm font-medium text-white transition hover:bg-signal-glow"
++      >
++        <span aria-hidden>⬇</span>
++        Download
++      </a>
++    );
++  }
++
++  if (failed && !fallbackUrl) return null;
++
++  return (
++    <div ref={containerRef} className="relative shrink-0">
++      <button
++        onClick={openMenu}
++        className="flex items-center gap-2 rounded-lg bg-signal px-4 py-2.5 text-sm font-medium text-white transition hover:bg-signal-glow"
++      >
++        <span aria-hidden>⬇</span>
++        Download
++        <span aria-hidden className={`transition ${open ? 'rotate-180' : ''}`}>
++          ▾
++        </span>
++      </button>
++
++      {open && (
++        <div className="glass-panel-solid absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-xl py-1">
++          {resolutions === null ? (
++            <p className="px-4 py-2.5 text-xs text-ink-faint">Loading…</p>
++          ) : resolutions.length === 0 ? (
++            <p className="px-4 py-2.5 text-xs text-ink-faint">No downloads available.</p>
++          ) : (
++            resolutions.map((r) => (
++              <button
++                key={r}
++                onClick={() => pick(r)}
++                disabled={issuing !== null}
++                className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm text-ink transition hover:bg-white/70 disabled:opacity-50"
++              >
++                {r}
++                {issuing === r && <span className="text-xs text-ink-faint">…</span>}
++              </button>
++            ))
++          )}
++          {error && <p className="px-4 py-2 text-xs text-danger">{error}</p>}
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/lib/bunny.ts b/lib/bunny.ts
+new file mode 100644
+index 0000000..7b30e04
+--- /dev/null
++++ b/lib/bunny.ts
+@@ -0,0 +1,81 @@
++import 'server-only';
++import crypto from 'crypto';
++
++/**
++ * Required env vars (Vercel Project Settings → Environment Variables,
++ * server-side only — never exposed with a NEXT_PUBLIC_ prefix):
++ *
++ *   BUNNY_STREAM_LIBRARY_ID        e.g. "123456"
++ *   BUNNY_STREAM_API_KEY           Stream API key (dashboard → Stream → API)
++ *   BUNNY_PULL_ZONE_HOSTNAME       e.g. "vz-abc123-xyz.b-cdn.net" (no https://)
++ *   BUNNY_TOKEN_AUTH_ENABLED       "true" if the pull zone has Token
++ *                                  Authentication turned on, otherwise omit
++ *   BUNNY_TOKEN_AUTH_SECURITY_KEY  the pull zone's token auth security key
++ *                                  (only needed if the above is "true")
++ *
++ * Note: BUNNY_STREAM_LIBRARY_ID here is a fallback/default — the actual
++ * library ID used for a given video is read from that video's own
++ * source_ref ("{libraryId}/{videoGuid}", same field /api/video/[id]/play
++ * already uses), so this still works correctly even with videos spread
++ * across multiple libraries.
++ */
++
++const API_KEY = process.env.BUNNY_STREAM_API_KEY;
++const PULL_ZONE_HOSTNAME = process.env.BUNNY_PULL_ZONE_HOSTNAME;
++const TOKEN_AUTH_ENABLED = process.env.BUNNY_TOKEN_AUTH_ENABLED === 'true';
++const TOKEN_AUTH_SECURITY_KEY = process.env.BUNNY_TOKEN_AUTH_SECURITY_KEY;
++
++export function bunnyDownloadConfigured(): boolean {
++  return Boolean(API_KEY && PULL_ZONE_HOSTNAME && (!TOKEN_AUTH_ENABLED || TOKEN_AUTH_SECURITY_KEY));
++}
++
++/**
++ * GET /library/{libraryId}/videos/{videoId} — availableResolutions comes
++ * back as a comma-separated string like "240p,360p,480p,1080p" (only
++ * resolutions actually finished encoding are listed, which is what keeps
++ * generated download links from ever 404ing).
++ */
++export async function getAvailableResolutions(
++  libraryId: string,
++  bunnyVideoId: string
++): Promise<string[]> {
++  if (!API_KEY) return [];
++  const res = await fetch(`https://video.bunnycdn.com/library/${libraryId}/videos/${bunnyVideoId}`, {
++    headers: { AccessKey: API_KEY, Accept: 'application/json' },
++    cache: 'no-store',
++  });
++  if (!res.ok) return [];
++  const data = await res.json();
++  const raw = typeof data.availableResolutions === 'string' ? data.availableResolutions : '';
++  return raw
++    .split(',')
++    .map((r: string) => r.trim())
++    .filter(Boolean);
++}
++
++/**
++ * BunnyCDN (basic) Token Authentication:
++ *   token = Base64( SHA256_RAW(security_key + url_path + expires) )
++ * then URL-safe-encoded (+/= replaced, no padding). See
++ * https://support.bunny.net/hc/en-us/articles/360016055099
++ */
++function signPath(path: string, expires: number): string {
++  const hashable = `${TOKEN_AUTH_SECURITY_KEY}${path}${expires}`;
++  const raw = crypto.createHash('sha256').update(hashable).digest('base64');
++  return raw.replace(/\n/g, '').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
++}
++
++/**
++ * Builds a downloadable MP4 URL for one resolution. Short-lived (default
++ * 5 minutes) when Token Authentication is on, so a copied/shared link
++ * stops working almost immediately — this is generated fresh, on demand,
++ * per click, never stored or reused.
++ */
++export function buildDownloadUrl(bunnyVideoId: string, resolution: string, ttlSeconds = 300): string {
++  const path = `/${bunnyVideoId}/play_${resolution}.mp4`;
++  const base = `https://${PULL_ZONE_HOSTNAME}${path}`;
++  if (!TOKEN_AUTH_ENABLED) return base;
++  const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
++  const token = signPath(path, expires);
++  return `${base}?token=${token}&expires=${expires}`;
++}
