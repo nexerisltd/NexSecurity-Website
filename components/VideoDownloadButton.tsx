@@ -32,7 +32,7 @@ export function VideoDownloadButton({
     setOpen((v) => !v);
     if (resolutions !== null || failed) return; // already loaded (or already gave up)
     try {
-      const res = await fetch(`/api/video/${videoId}/download`);
+      const res = await fetch(`/api/video/${videoId}/hls-download`);
       if (!res.ok) throw new Error();
       const data = await res.json();
       setResolutions(data.resolutions ?? []);
@@ -41,28 +41,19 @@ export function VideoDownloadButton({
     }
   }
 
-  async function pick(resolution: string) {
+  function pick(resolution: string) {
     setIssuing(resolution);
     setError(null);
-    try {
-      const res = await fetch(`/api/video/${videoId}/download`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resolution }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'Could not generate link.');
-      // Cross-origin CDN link: opening it is the most reliable option —
-      // whether the browser shows it inline or downloads it depends on
-      // the response headers Bunny's pull zone sends for that file, not
-      // on anything this app controls.
-      window.open(data.url, '_blank', 'noopener,noreferrer');
-      setOpen(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not generate link.');
-    } finally {
-      setIssuing(null);
-    }
+    // Same-origin, server-streamed file (built live from the HLS segments,
+    // independent of Bunny's MP4-rendition download feature) — a plain
+    // navigation lets the browser handle it as a native download with its
+    // own progress UI, rather than buffering the whole video in JS memory.
+    // New tab so a JSON error response (no attachment header) never
+    // navigates the student away from the class page.
+    const url = `/api/video/${videoId}/hls-download?resolution=${encodeURIComponent(resolution)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+    setOpen(false);
+    setIssuing(null);
   }
 
   // Dynamic resolutions never loaded / not configured / genuinely empty

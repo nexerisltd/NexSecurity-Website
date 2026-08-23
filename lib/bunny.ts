@@ -79,3 +79,26 @@ export function buildDownloadUrl(bunnyVideoId: string, resolution: string, ttlSe
   const token = signPath(path, expires);
   return `${base}?token=${token}&expires=${expires}`;
 }
+
+/**
+ * HLS fallback path — used by /api/video/[id]/hls-download to build a
+ * downloadable file straight from Bunny's HLS pull-zone output (the same
+ * kind of URL as https://{pullzone}/{videoId}/{resolution}/video.m3u8),
+ * completely independent of the Stream API's MP4-rendition feature above.
+ * Useful when that feature is misbehaving/unavailable on Bunny's side.
+ */
+export function hlsPullZoneConfigured(): boolean {
+  return Boolean(PULL_ZONE_HOSTNAME);
+}
+
+function signIfNeeded(path: string, ttlSeconds: number): string {
+  const base = `https://${PULL_ZONE_HOSTNAME}${path}`;
+  if (!TOKEN_AUTH_ENABLED) return base;
+  const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const token = signPath(path, expires);
+  return `${base}?token=${token}&expires=${expires}`;
+}
+
+export function buildHlsMasterUrl(bunnyVideoId: string, ttlSeconds = 300): string {
+  return signIfNeeded(`/${bunnyVideoId}/playlist.m3u8`, ttlSeconds);
+}
