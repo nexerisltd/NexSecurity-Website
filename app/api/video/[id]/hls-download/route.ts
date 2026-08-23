@@ -13,6 +13,23 @@ export const dynamic = 'force-dynamic';
 // (once Bunny's issue is fixed) remains the reliable path for long videos.
 export const maxDuration = 300;
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? '';
+
+/**
+ * Some Bunny pull zones have hotlink/User-Agent protection that quietly
+ * rejects plain server-to-server fetches (no Referer, generic runtime UA)
+ * while the exact same URL opens fine in a real browser tab. These
+ * headers make our serverless fetch look like a normal browser request
+ * from this site, which is what the pull zone's allow-list expects.
+ */
+function bunnyFetchHeaders(): HeadersInit {
+  return {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+    ...(SITE_URL ? { Referer: SITE_URL, Origin: SITE_URL } : {}),
+  };
+}
+
 type Variant = { label: string; url: string };
 
 /**
@@ -99,9 +116,14 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   const resolution = request.nextUrl.searchParams.get('resolution');
 
   const masterUrl = buildHlsMasterUrl(resolved.bunnyVideoId);
-  const masterRes = await fetch(masterUrl, { cache: 'no-store' });
+  const masterRes = await fetch(masterUrl, { cache: 'no-store', headers: bunnyFetchHeaders() });
   if (!masterRes.ok) {
-    return NextResponse.json({ error: 'Video stream is not currently available.' }, { status: 502 });
+    const bodySnippet = (await masterRes.text().catch(() => '')).slice(0, 200);
+    console.error('[hls-download] master fetch failed', masterRes.status, masterUrl, bodySnippet);
+    return NextResponse.json(
+      { error: `Video stream is not currently available. (CDN ${masterRes.status})` },
+      { status: 502 }
+    );
   }
   const masterText = await masterRes.text();
   const variants = parseVariants(masterText, masterUrl);
@@ -122,9 +144,13 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   const variant = variants.find((v) => v.label === resolution);
   if (!variant) return NextResponse.json({ error: 'That resolution is not available.' }, { status: 400 });
 
-  const variantRes = await fetch(variant.url, { cache: 'no-store' });
+  const variantRes = await fetch(variant.url, { cache: 'no-store', headers: bunnyFetchHeaders() });
   if (!variantRes.ok) {
-    return NextResponse.json({ error: 'Video stream is not currently available.' }, { status: 502 });
+    console.error('[hls-download] variant fetch failed', variantRes.status, variant.url);
+    return NextResponse.json(
+      { error: `Video stream is not currently available. (CDN ${variantRes.status})` },
+      { status: 502 }
+    );
   }
   const variantText = await variantRes.text();
   const { segments, encrypted } = parseSegments(variantText, variant.url);
@@ -149,8 +175,10 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     async start(controller) {
       try {
         for (const segUrl of segments) {
-          const segRes = await fetch(segUrl, { cache: 'no-store' });
-          if (!segRes.ok || !segRes.body) throw new Error(`Segment fetch failed: ${segUrl}`);
+          const segRes = await fetch(segUrl, { cache: 'no-store', headers: bunnyFetchHeaders() });
+          if (!segRes.ok || !segRes.body) {
+            throw new Error(`Segment fetch failed (${segRes.status}): ${segUrl}`);
+          }
           const reader = segRes.body.getReader();
           // eslint-disable-next-line no-constant-condition
           while (true) {

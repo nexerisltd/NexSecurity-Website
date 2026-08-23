@@ -16,6 +16,13 @@ export function VideoDownloadButton({
   const [failed, setFailed] = useState(false);
   const [issuing, setIssuing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Real error text from a failed resolutions-list call (CDN hiccup, auth
+  // issue, etc). Kept separate from `failed` — only "feature genuinely not
+  // configured" (503) or a total network failure falls back to the admin's
+  // static link; everything else shows the real error + a Retry, since the
+  // static fallback is usually just a raw .m3u8 URL that isn't a real
+  // download either and only confuses students.
+  const [listError, setListError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -28,17 +35,29 @@ export function VideoDownloadButton({
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, []);
 
-  async function openMenu() {
-    setOpen((v) => !v);
+  async function loadResolutions() {
     if (resolutions !== null || failed) return; // already loaded (or already gave up)
+    setListError(null);
     try {
       const res = await fetch(`/api/video/${videoId}/hls-download`);
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      setResolutions(data.resolutions ?? []);
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (res.status === 503 && fallbackUrl) {
+          setFailed(true); // not configured at all -> static fallback is the intended path
+          return;
+        }
+        setListError(data?.error ?? `Could not load resolutions (${res.status}).`);
+        return;
+      }
+      setResolutions(data?.resolutions ?? []);
     } catch {
-      setFailed(true);
+      setListError('Could not reach the server. Check your connection and try again.');
     }
+  }
+
+  function openMenu() {
+    setOpen((v) => !v);
+    void loadResolutions();
   }
 
   function pick(resolution: string) {
@@ -89,8 +108,18 @@ export function VideoDownloadButton({
       </button>
 
       {open && (
-        <div className="glass-panel-solid absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-xl py-1">
-          {resolutions === null ? (
+        <div className="glass-panel-solid absolute right-0 z-20 mt-2 w-52 overflow-hidden rounded-xl py-1">
+          {listError ? (
+            <div className="px-4 py-2.5">
+              <p className="text-xs text-danger">{listError}</p>
+              <button
+                onClick={() => void loadResolutions()}
+                className="mt-1 text-xs font-medium text-signal-glow hover:underline"
+              >
+                Retry
+              </button>
+            </div>
+          ) : resolutions === null ? (
             <p className="px-4 py-2.5 text-xs text-ink-faint">Loading…</p>
           ) : resolutions.length === 0 ? (
             <p className="px-4 py-2.5 text-xs text-ink-faint">No downloads available.</p>
