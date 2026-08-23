@@ -51,6 +51,11 @@ jobs:
           # fails the build) with no TTY attached. `-i` on docker run is
           # required for the piped input to actually reach the
           # container's stdin.
+          # `--manifest` is an `init`-only flag, NOT recognized by `build`
+          # (`build` operates on the twa-manifest.json already present in
+          # its working directory — set via -w below). Passing it to
+          # `build` anyway is what caused the "EISDIR: illegal operation
+          # on a directory, read" failure on earlier runs.
           yes | docker run --rm -i \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
@@ -59,7 +64,6 @@ jobs:
             ghcr.io/googlechromelabs/bubblewrap:latest \
             build \
             --skipPwaValidation \
-            --manifest=/workspace \
             --signingKeyPath=/workspace/android.keystore \
             --signingKeyAlias="${{ secrets.ANDROID_KEY_ALIAS }}"
 
