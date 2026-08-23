@@ -28,7 +28,7 @@
   "fallbackType": "customtabs",
   "features": {
     "playBilling": {
-      "enabled": true
+      "enabled": false
     }
   },
   "alphaDependencies": {
