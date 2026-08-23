@@ -1,0 +1,19 @@
+diff --git a/.github/workflows/build-android.yml b/.github/workflows/build-android.yml
+index bf7e179..a7278cc 100644
+--- a/.github/workflows/build-android.yml
++++ b/.github/workflows/build-android.yml
+@@ -45,7 +45,13 @@ jobs:
+           BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+           BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+         run: |
+-          docker run --rm \
++          # `yes |` auto-accepts the Android SDK Build-Tools license
++          # prompt ("Accept? (y/N)"), which the underlying sdkmanager
++          # asks on first use and which otherwise defaults to "N" (and
++          # fails the build) with no TTY attached. `-i` on docker run is
++          # required for the piped input to actually reach the
++          # container's stdin.
++          yes | docker run --rm -i \
+             -v "${{ github.workspace }}:/workspace" \
+             -w /workspace \
+             -e BUBBLEWRAP_KEYSTORE_PASSWORD \
