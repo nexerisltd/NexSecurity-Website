@@ -1,0 +1,328 @@
+From ed31ea4b0280e063c393a10bff755700eb45e2dc Mon Sep 17 00:00:00 2001
+From: "MR. ARX" <dev@nexeris.dev>
+Date: Sun, 23 Aug 2026 16:14:26 +0000
+Subject: [PATCH] Add HLS-based direct download fallback (Bunny MP4 rendition
+ is currently broken)
+
+- New /api/video/[id]/hls-download route: streams a downloadable file
+  built live from the video's HLS segments (.m3u8 -> concatenated .ts),
+  same auth/rate-limit/audit gates as the existing download route.
+- Independent of Bunny Stream's per-resolution MP4 rendition feature,
+  which is what's currently misbehaving (reported to Bunny support).
+- VideoDownloadButton now calls this route instead.
+- lib/bunny.ts: added buildHlsMasterUrl / hlsPullZoneConfigured, reusing
+  the existing token-auth signing logic.
+
+Known limitation: streams for the duration of the whole file, so very
+long recordings may hit serverless execution time limits on some plans.
+Revert to the MP4-rendition path once Bunny's issue is fixed.
+---
+ .env.example                             |  22 +++
+ app/api/video/[id]/hls-download/route.ts | 179 +++++++++++++++++++++++
+ components/VideoDownloadButton.tsx       |  33 ++---
+ lib/bunny.ts                             |  23 +++
+ 4 files changed, 236 insertions(+), 21 deletions(-)
+ create mode 100644 app/api/video/[id]/hls-download/route.ts
+
+diff --git a/.env.example b/.env.example
+index 06d033c..eb70113 100644
+--- a/.env.example
++++ b/.env.example
+@@ -16,3 +16,25 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+ 
+ # ── App ─────────────────────────────────────────────────────────────────
+ NEXT_PUBLIC_SITE_URL=https://nexsecurity.vercel.app
++
++# ── Bunny Stream (video downloads) ─────────────────────────────────────
++# SERVER-SIDE ONLY. Powers the "Download" button on the video page
++# (components/VideoDownloadButton.tsx → app/api/video/[id]/download).
++# Without these set, bunnyDownloadConfigured() returns false and the
++# button falls back to each video's manually-pasted download_url (or
++# hides itself if there isn't one).
++#
++#   BUNNY_STREAM_LIBRARY_ID        Bunny dashboard → Stream → your library → ID
++#   BUNNY_STREAM_API_KEY           Same library → API → "Video Library API Key"
++#   BUNNY_PULL_ZONE_HOSTNAME       Your Stream pull zone hostname, no https://
++#                                  e.g. vz-a3fb7c6a-b8f.b-cdn.net
++#   BUNNY_TOKEN_AUTH_ENABLED       "true" if that pull zone has Token
++#                                  Authentication turned on (Security tab),
++#                                  otherwise omit this line entirely
++#   BUNNY_TOKEN_AUTH_SECURITY_KEY  Pull zone → Security → Token Authentication
++#                                  Key — only needed if the line above is "true"
++BUNNY_STREAM_LIBRARY_ID=your-library-id
++BUNNY_STREAM_API_KEY=your-stream-api-key
++BUNNY_PULL_ZONE_HOSTNAME=vz-your-pull-zone.b-cdn.net
++# BUNNY_TOKEN_AUTH_ENABLED=true
++# BUNNY_TOKEN_AUTH_SECURITY_KEY=your-token-auth-security-key
+diff --git a/app/api/video/[id]/hls-download/route.ts b/app/api/video/[id]/hls-download/route.ts
+new file mode 100644
+index 0000000..8f8d8e5
+--- /dev/null
++++ b/app/api/video/[id]/hls-download/route.ts
+@@ -0,0 +1,179 @@
++import { NextResponse, type NextRequest } from 'next/server';
++import { requireAuthorized } from '@/lib/auth';
++import { createSupabaseAdminClient } from '@/lib/supabase/admin';
++import { uuidSchema } from '@/lib/validation';
++import { checkRateLimit } from '@/lib/rateLimit';
++import { logAuditEvent } from '@/lib/audit';
++import { hlsPullZoneConfigured, buildHlsMasterUrl } from '@/lib/bunny';
++
++export const dynamic = 'force-dynamic';
++// Vercel Hobby caps this at 60s regardless of this value; Pro/Enterprise
++// can go higher. A long lecture recording may still hit the platform
++// ceiling — if that happens the native Bunny MP4-rendition download
++// (once Bunny's issue is fixed) remains the reliable path for long videos.
++export const maxDuration = 300;
++
++type Variant = { label: string; url: string };
++
++/**
++ * Same authorization gate as /api/video/[id]/download — repeated here on
++ * purpose (see that route's comment) rather than shared, since this route
++ * is an equally sensitive leak surface.
++ */
++async function authorizeAndLoadVideo(videoId: string, email: string) {
++  const adminClient = createSupabaseAdminClient();
++  const { data: video } = await adminClient
++    .from('videos')
++    .select('id, title, provider, source_ref, board:board_id(id, published)')
++    .eq('id', videoId)
++    .maybeSingle();
++
++  const board = video?.board as unknown as { id: string; published: boolean } | null;
++  if (!video || !board || !board.published || video.provider !== 'bunny') {
++    await logAuditEvent('VIDEO_ACCESS_DENIED', email, videoId, { reason: 'hls_download_denied' });
++    return null;
++  }
++
++  const [libraryId, bunnyVideoId] = video.source_ref.split('/');
++  if (!libraryId || !bunnyVideoId) return null;
++
++  return { bunnyVideoId, title: (video.title as string) ?? 'class-video' };
++}
++
++/** Pulls RESOLUTION/label + URI pairs out of a master playlist. Falls back
++ * to treating the fetched playlist itself as the only variant when it has
++ * no #EXT-X-STREAM-INF lines (i.e. it's already a media playlist). */
++function parseVariants(masterText: string, masterUrl: string): Variant[] {
++  const lines = masterText.split('\n').map((l) => l.trim());
++  const variants: Variant[] = [];
++
++  for (let i = 0; i < lines.length; i++) {
++    if (!lines[i].startsWith('#EXT-X-STREAM-INF')) continue;
++    const uriLine = lines[i + 1];
++    if (!uriLine || uriLine.startsWith('#')) continue;
++
++    const resMatch = lines[i].match(/RESOLUTION=\d+x(\d+)/);
++    const absoluteUrl = new URL(uriLine, masterUrl).toString();
++    const folderMatch = absoluteUrl.match(/\/(\d+p)\//);
++    const label = folderMatch ? folderMatch[1] : resMatch ? `${resMatch[1]}p` : `variant-${variants.length + 1}`;
++
++    variants.push({ label, url: absoluteUrl });
++  }
++
++  if (variants.length === 0) {
++    variants.push({ label: 'default', url: masterUrl });
++  }
++  return variants;
++}
++
++/** Pulls segment URIs (in order) out of a media/variant playlist. */
++function parseSegments(variantText: string, variantUrl: string): { segments: string[]; encrypted: boolean } {
++  const lines = variantText.split('\n').map((l) => l.trim());
++  const segments: string[] = [];
++  let encrypted = false;
++
++  for (const line of lines) {
++    if (line.startsWith('#EXT-X-KEY') && !line.includes('METHOD=NONE')) encrypted = true;
++    if (!line || line.startsWith('#')) continue;
++    segments.push(new URL(line, variantUrl).toString());
++  }
++  return { segments, encrypted };
++}
++
++/** GET without ?resolution= lists available resolutions.
++ *  GET with ?resolution=240p streams that resolution as a downloadable file. */
++export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
++  const auth = await requireAuthorized();
++  if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++
++  if (!hlsPullZoneConfigured()) {
++    return NextResponse.json({ error: 'Downloads are not configured yet.' }, { status: 503 });
++  }
++
++  const parsedId = uuidSchema.safeParse(params.id);
++  if (!parsedId.success) return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
++
++  const resolved = await authorizeAndLoadVideo(parsedId.data, auth.user.email);
++  if (!resolved) return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
++
++  const resolution = request.nextUrl.searchParams.get('resolution');
++
++  const masterUrl = buildHlsMasterUrl(resolved.bunnyVideoId);
++  const masterRes = await fetch(masterUrl, { cache: 'no-store' });
++  if (!masterRes.ok) {
++    return NextResponse.json({ error: 'Video stream is not currently available.' }, { status: 502 });
++  }
++  const masterText = await masterRes.text();
++  const variants = parseVariants(masterText, masterUrl);
++
++  // --- List mode ---
++  if (!resolution) {
++    const rl = checkRateLimit(`hls_download_list:${auth.user.email}`, 20, 60_000);
++    if (!rl.allowed) return NextResponse.json({ error: 'Too many requests.' }, { status: 429 });
++    return NextResponse.json({ resolutions: variants.map((v) => v.label) });
++  }
++
++  // --- Stream/download mode ---
++  const rl = checkRateLimit(`hls_download:${auth.user.email}`, 6, 60_000);
++  if (!rl.allowed) {
++    return NextResponse.json({ error: 'Too many download requests. Slow down.' }, { status: 429 });
++  }
++
++  const variant = variants.find((v) => v.label === resolution);
++  if (!variant) return NextResponse.json({ error: 'That resolution is not available.' }, { status: 400 });
++
++  const variantRes = await fetch(variant.url, { cache: 'no-store' });
++  if (!variantRes.ok) {
++    return NextResponse.json({ error: 'Video stream is not currently available.' }, { status: 502 });
++  }
++  const variantText = await variantRes.text();
++  const { segments, encrypted } = parseSegments(variantText, variant.url);
++
++  if (encrypted) {
++    return NextResponse.json(
++      { error: 'This video is encrypted and cannot be downloaded this way yet.' },
++      { status: 501 }
++    );
++  }
++  if (segments.length === 0) {
++    return NextResponse.json({ error: 'No video segments found.' }, { status: 502 });
++  }
++
++  await logAuditEvent('VIDEO_ACCESS_GRANTED', auth.user.email, parsedId.data, {
++    action: 'HLS_DOWNLOAD',
++    resolution: variant.label,
++    segmentCount: segments.length,
++  });
++
++  const stream = new ReadableStream<Uint8Array>({
++    async start(controller) {
++      try {
++        for (const segUrl of segments) {
++          const segRes = await fetch(segUrl, { cache: 'no-store' });
++          if (!segRes.ok || !segRes.body) throw new Error(`Segment fetch failed: ${segUrl}`);
++          const reader = segRes.body.getReader();
++          // eslint-disable-next-line no-constant-condition
++          while (true) {
++            const { done, value } = await reader.read();
++            if (done) break;
++            if (value) controller.enqueue(value);
++          }
++        }
++        controller.close();
++      } catch (err) {
++        console.error('[hls-download] stream failed', err);
++        controller.error(err);
++      }
++    },
++  });
++
++  const safeTitle = resolved.title.replace(/[^\w\-]+/g, '_').slice(0, 80) || 'class-video';
++
++  return new Response(stream, {
++    headers: {
++      'Content-Type': 'video/mp2t',
++      'Content-Disposition': `attachment; filename="${safeTitle}_${variant.label}.ts"`,
++      'Cache-Control': 'no-store',
++    },
++  });
++}
+diff --git a/components/VideoDownloadButton.tsx b/components/VideoDownloadButton.tsx
+index cf0b6f2..e531757 100644
+--- a/components/VideoDownloadButton.tsx
++++ b/components/VideoDownloadButton.tsx
+@@ -32,7 +32,7 @@ export function VideoDownloadButton({
+     setOpen((v) => !v);
+     if (resolutions !== null || failed) return; // already loaded (or already gave up)
+     try {
+-      const res = await fetch(`/api/video/${videoId}/download`);
++      const res = await fetch(`/api/video/${videoId}/hls-download`);
+       if (!res.ok) throw new Error();
+       const data = await res.json();
+       setResolutions(data.resolutions ?? []);
+@@ -41,28 +41,19 @@ export function VideoDownloadButton({
+     }
+   }
+ 
+-  async function pick(resolution: string) {
++  function pick(resolution: string) {
+     setIssuing(resolution);
+     setError(null);
+-    try {
+-      const res = await fetch(`/api/video/${videoId}/download`, {
+-        method: 'POST',
+-        headers: { 'Content-Type': 'application/json' },
+-        body: JSON.stringify({ resolution }),
+-      });
+-      const data = await res.json();
+-      if (!res.ok) throw new Error(data.error ?? 'Could not generate link.');
+-      // Cross-origin CDN link: opening it is the most reliable option —
+-      // whether the browser shows it inline or downloads it depends on
+-      // the response headers Bunny's pull zone sends for that file, not
+-      // on anything this app controls.
+-      window.open(data.url, '_blank', 'noopener,noreferrer');
+-      setOpen(false);
+-    } catch (e) {
+-      setError(e instanceof Error ? e.message : 'Could not generate link.');
+-    } finally {
+-      setIssuing(null);
+-    }
++    // Same-origin, server-streamed file (built live from the HLS segments,
++    // independent of Bunny's MP4-rendition download feature) — a plain
++    // navigation lets the browser handle it as a native download with its
++    // own progress UI, rather than buffering the whole video in JS memory.
++    // New tab so a JSON error response (no attachment header) never
++    // navigates the student away from the class page.
++    const url = `/api/video/${videoId}/hls-download?resolution=${encodeURIComponent(resolution)}`;
++    window.open(url, '_blank', 'noopener,noreferrer');
++    setOpen(false);
++    setIssuing(null);
+   }
+ 
+   // Dynamic resolutions never loaded / not configured / genuinely empty
+diff --git a/lib/bunny.ts b/lib/bunny.ts
+index 7b30e04..609077d 100644
+--- a/lib/bunny.ts
++++ b/lib/bunny.ts
+@@ -79,3 +79,26 @@ export function buildDownloadUrl(bunnyVideoId: string, resolution: string, ttlSe
+   const token = signPath(path, expires);
+   return `${base}?token=${token}&expires=${expires}`;
+ }
++
++/**
++ * HLS fallback path — used by /api/video/[id]/hls-download to build a
++ * downloadable file straight from Bunny's HLS pull-zone output (the same
++ * kind of URL as https://{pullzone}/{videoId}/{resolution}/video.m3u8),
++ * completely independent of the Stream API's MP4-rendition feature above.
++ * Useful when that feature is misbehaving/unavailable on Bunny's side.
++ */
++export function hlsPullZoneConfigured(): boolean {
++  return Boolean(PULL_ZONE_HOSTNAME);
++}
++
++function signIfNeeded(path: string, ttlSeconds: number): string {
++  const base = `https://${PULL_ZONE_HOSTNAME}${path}`;
++  if (!TOKEN_AUTH_ENABLED) return base;
++  const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
++  const token = signPath(path, expires);
++  return `${base}?token=${token}&expires=${expires}`;
++}
++
++export function buildHlsMasterUrl(bunnyVideoId: string, ttlSeconds = 300): string {
++  return signIfNeeded(`/${bunnyVideoId}/playlist.m3u8`, ttlSeconds);
++}
+-- 
+2.43.0
+
