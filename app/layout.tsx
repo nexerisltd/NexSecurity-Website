@@ -21,7 +21,7 @@ export const metadata: Metadata = {
   icons: { icon: '/logo.png', shortcut: '/logo.png', apple: '/logo.png' },
   verification: { google: '7VfuwzozReuUwaodd5kmJAMF9HbifQWHX0aU-EUfpYg' },
   manifest: '/manifest.json',
-  themeColor: '#0a0a0a',
+  themeColor: '#3D6EFF',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
