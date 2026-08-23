@@ -7,12 +7,3 @@ node_modules
 *.tsbuildinfo
 next-env.d.ts
 android.keystore
-app/
-build.gradle
-gradle.properties
-gradle/
-gradlew
-gradlew.bat
-manifest-checksum.txt
-settings.gradle
-store_icon.png

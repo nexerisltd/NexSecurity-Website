@@ -1,0 +1,17 @@
+diff --git a/.gitignore b/.gitignore
+index ca63434..48d2c63 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -7,12 +7,3 @@ node_modules
+ *.tsbuildinfo
+ next-env.d.ts
+ android.keystore
+-app/
+-build.gradle
+-gradle.properties
+-gradle/
+-gradlew
+-gradlew.bat
+-manifest-checksum.txt
+-settings.gradle
+-store_icon.png
