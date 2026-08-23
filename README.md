@@ -67,6 +67,22 @@ Bunny's Token Authentication + Allowed Referrers (in Stream Library →
 Security) can be added back to `app/api/video/[id]/play/route.ts` to
 close that gap — just say the word.
 
+### 1.2.1 Bunny download links (optional)
+
+`/admin/videos` and the class page also support auto-generated,
+resolution-picker download links (no manual per-class link needed) — see
+`lib/bunny.ts`. This needs 4 more env vars, all server-side only:
+
+```
+BUNNY_STREAM_API_KEY            Stream API key (dashboard → Stream → API)
+BUNNY_PULL_ZONE_HOSTNAME         e.g. vz-xxxxx.b-cdn.net, no https://
+BUNNY_TOKEN_AUTH_ENABLED         "true" if the pull zone has Token Authentication on
+BUNNY_TOKEN_AUTH_SECURITY_KEY    only needed if the above is "true"
+```
+
+Without these set, the Download button silently falls back to a class's
+manually-set `download_url` (if any), or hides itself — nothing breaks.
+
 ### 1.3 Google Cloud Console
 
 In your OAuth client's **Authorized redirect URIs**, add your Supabase
@@ -239,6 +255,46 @@ mutations, and video access grants/denials into `audit_logs`, readable
 only by admins. No secrets or tokens are logged — just who did what to
 which resource, when.
 
+### 2.8 Per-account IP/device restriction
+
+Solves account-sharing (one login used by several people at once), not
+just theft. Every authorized request records a `(ip_address,
+device_label)` "sighting" for that user in `device_sightings`
+(`device_label` is OS+browser from the User-Agent — real hardware model
+isn't exposed to websites, so this is a practical proxy, not literal
+device fingerprinting). An admin reviews sightings at
+`/admin/users/[id]` and Approves or Restricts each one into
+`user_devices`; approving (or restricting) the first one for an account
+turns `authorized_users.restrict_devices` on automatically — from then
+on, only combos with `status = 'authorized'` pass `getAuth()`, anything
+else (including a never-seen combo) is `DEVICE_BLOCKED`.
+
+This is re-checked on a timer, not just at login: `<VideoPlayer>` re-hits
+`/api/video/[id]/play` roughly every 4 minutes while a class is open
+(without disrupting a still-valid session), so revoking a device cuts an
+**already-open tab's** playback within minutes — not just future page
+loads. See `lib/auth.ts`, `lib/requestInfo.ts`, and
+`supabase/migrations/0003_device_restrictions.sql` /
+`0004_device_status_label.sql`.
+
+### 2.9 Content areas: E-Books & Routines
+
+Two more per-board content types alongside classes, both admin-managed
+in `/admin/ebooks` and the Boards admin (board `type = routine`):
+
+- **E-Books** — a board can list downloadable books (`e_books` table,
+  same "no public SELECT, server-route-only" RLS pattern as `videos`).
+  Aggregated across all published boards at `/learn/ebooks`.
+- **Routines** — a board can instead just BE a single 16:9 image (a
+  class schedule/routine graphic) with a title/description, no video
+  hierarchy underneath. Aggregated at `/learn/routines`.
+
+### 2.10 Android app (Trusted Web Activity)
+
+See §6 below — the Android app is a thin Chrome-based wrapper, not a
+separate codebase; it has no auth logic of its own; every request still
+goes through the exact same server-side checks described above.
+
 ---
 
 ## 3. Threat model & mitigations
@@ -259,6 +315,7 @@ which resource, when.
 | Malicious query params / input | Zod validation on every admin-writable field (emails, URLs restricted to https, string length caps) |
 | Exposed environment variables | Service-role key isolated to one file (`lib/supabase/admin.ts`), never `NEXT_PUBLIC_`-prefixed, never sent to the client |
 | Insecure DB rules | RLS enabled on every table, deny-by-default, security-definer helper functions for role checks |
+| Account sharing (one login, many people) | Per-account IP+device allowlist (§2.8), enforced on every request AND re-checked periodically during active video playback, not just at sign-in |
 
 ---
 
@@ -331,3 +388,40 @@ which resource, when.
   "provider" abstraction.
 - **Browser playback cannot stop screen recording** — documented, not
   solvable, by design scoped to preventing account/link-level leakage.
+
+---
+
+## 6. Android App
+
+NexSecurity ships as a native Android app — a [Trusted Web
+Activity](https://developer.chrome.com/docs/android/trusted-web-activity)
+(full-screen Chrome, no address bar; not a separate codebase or a
+different auth model — every request from the app hits the exact same
+server-side checks as the website). Built via
+[Bubblewrap](https://github.com/GoogleChromeLabs/bubblewrap), signed and
+released automatically by `.github/workflows/build-android.yml`.
+
+<!-- ANDROID_DOWNLOAD_LINK_START -->
+
+[⬇ Download latest APK](https://github.com/nexerisltd/NexSecurity-Website/releases/latest)
+
+<!-- ANDROID_DOWNLOAD_LINK_END -->
+
+Every successful run of that workflow:
+1. Builds and signs a release `.apk` + `.aab` with the keystore in repo
+   secrets (never committed).
+2. Publishes them as a new GitHub Release (tag `android-build-<run
+   number>`).
+3. Rewrites the download link above to point at that release and commits
+   the change — so this README always links to the latest build with no
+   manual step.
+
+**To trigger a new build:** Actions tab → **Build Android App** → **Run
+workflow**.
+
+**One-time project setup** (already done for this repo — `twa-manifest.json`
+is committed at the repo root, and the signing keystore is base64-encoded
+in the `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` /
+`ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` repo secrets) is documented
+in `android/README.md`, including why it has to be done once,
+interactively, via GitHub Codespaces rather than fully from CI.

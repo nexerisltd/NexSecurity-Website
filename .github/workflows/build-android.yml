@@ -23,12 +23,17 @@ on:
     tags:
       - 'android-v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Verify twa-manifest.json exists
         run: |
@@ -79,3 +84,33 @@ jobs:
             app-release-signed.apk
             app-release-bundle.aab
           if-no-files-found: warn
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="android-build-${{ github.run_number }}"
+          gh release create "$TAG" \
+            app-release-signed.apk \
+            app-release-bundle.aab \
+            --title "Android build #${{ github.run_number }}" \
+            --notes "Automated build from commit ${{ github.sha }}."
+
+      # Rewrites the README's download link to point at THIS run's
+      # release, so the README always links to the latest build without
+      # anyone touching it by hand. Only the text between the two marker
+      # comments in README.md is replaced — everything else is untouched.
+      - name: Update README download link
+        run: |
+          TAG="android-build-${{ github.run_number }}"
+          URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/app-release-signed.apk"
+          perl -0777 -pi -e "s/(<!-- ANDROID_DOWNLOAD_LINK_START -->).*?(<!-- ANDROID_DOWNLOAD_LINK_END -->)/\$1\n\n[⬇ Download latest APK (build #${{ github.run_number }})](${URL})\n\n\$2/s" README.md
+
+      - name: Commit updated README
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --quiet && echo "No README changes" || git commit -m "chore: update Android download link (build #${{ github.run_number }}) [skip ci]"
+          git pull --rebase origin main || true
+          git push origin HEAD:main
