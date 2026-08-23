@@ -110,6 +110,7 @@ export async function getAuth(): Promise<AuthResult> {
       .eq('user_id', typedUser.id)
       .eq('ip_address', ip)
       .eq('device_label', deviceLabel)
+      .eq('status', 'authorized')
       .maybeSingle();
 
     if (!approved) {

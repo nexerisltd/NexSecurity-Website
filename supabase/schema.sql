@@ -194,12 +194,21 @@ create table if not exists public.user_devices (
   user_id uuid not null references public.authorized_users (id) on delete cascade,
   ip_address text not null,
   device_label text not null default 'Any device',
+  -- 'authorized' = allowed to sign in; 'restricted' = explicitly denied.
+  -- A row existing at all means an admin has made a decision about this
+  -- IP+device combo; sightings with no matching row here are still
+  -- pending ("Unauthorized IP request" in the admin UI).
+  status text not null default 'authorized' check (status in ('authorized', 'restricted')),
+  -- Admin-given friendly name, e.g. "Home WiFi", "College router" — pure
+  -- label, plays no role in the auth check itself.
+  label text,
   note text,
   created_at timestamptz not null default now(),
   unique (user_id, ip_address, device_label)
 );
 
 create index if not exists idx_user_devices_user on public.user_devices (user_id);
+create index if not exists idx_user_devices_user_status on public.user_devices (user_id, status);
 
 -- ---------------------------------------------------------------------------
 -- 10. device_sightings — every distinct (ip_address, device_label) combo

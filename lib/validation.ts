@@ -16,9 +16,18 @@ export const updateAuthorizedUserSchema = z.object({
   restrict_devices: z.boolean().optional(),
 });
 
+export const deviceStatusSchema = z.enum(['authorized', 'restricted']);
+
 export const deviceApprovalSchema = z.object({
   ip_address: z.string().trim().min(1).max(64),
   device_label: z.string().trim().min(1).max(80),
+  status: deviceStatusSchema.default('authorized'),
+  label: z.string().trim().max(60).optional().nullable(),
+});
+
+export const deviceUpdateSchema = z.object({
+  status: deviceStatusSchema.optional(),
+  label: z.string().trim().max(60).optional().nullable(),
 });
 
 const safeUrl = z

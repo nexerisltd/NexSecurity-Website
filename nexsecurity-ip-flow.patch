@@ -1,0 +1,642 @@
+diff --git a/app/admin/users/[id]/page.tsx b/app/admin/users/[id]/page.tsx
+index 02d05ca..86a1e46 100644
+--- a/app/admin/users/[id]/page.tsx
++++ b/app/admin/users/[id]/page.tsx
+@@ -4,11 +4,12 @@ import Link from 'next/link';
+ import { useEffect, useState } from 'react';
+ import { useParams } from 'next/navigation';
+ 
+-type ApprovedDevice = {
++type Device = {
+   id: string;
+   ip_address: string;
+   device_label: string;
+-  note: string | null;
++  status: 'authorized' | 'restricted';
++  label: string | null;
+   created_at: string;
+ };
+ 
+@@ -34,12 +35,12 @@ export default function UserDevicesPage() {
+   const userId = params.id;
+ 
+   const [user, setUser] = useState<UserRow | null>(null);
+-  const [approved, setApproved] = useState<ApprovedDevice[]>([]);
+-  const [sightings, setSightings] = useState<Sighting[]>([]);
++  const [authorized, setAuthorized] = useState<Device[]>([]);
++  const [restricted, setRestricted] = useState<Device[]>([]);
++  const [pending, setPending] = useState<Sighting[]>([]);
+   const [loading, setLoading] = useState(true);
+   const [error, setError] = useState<string | null>(null);
+   const [busy, setBusy] = useState<string | null>(null);
+-  const [savingRestrict, setSavingRestrict] = useState(false);
+ 
+   async function load() {
+     setLoading(true);
+@@ -54,8 +55,9 @@ export default function UserDevicesPage() {
+       setUser(found ?? null);
+     }
+     if (devicesRes.ok) {
+-      setApproved(devicesData.approved);
+-      setSightings(devicesData.sightings);
++      setAuthorized(devicesData.authorized);
++      setRestricted(devicesData.restricted);
++      setPending(devicesData.pending);
+     }
+     setLoading(false);
+   }
+@@ -65,56 +67,63 @@ export default function UserDevicesPage() {
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [userId]);
+ 
+-  async function toggleRestrict() {
+-    if (!user) return;
+-    setSavingRestrict(true);
++  async function decide(ip: string, deviceLabel: string, status: 'authorized' | 'restricted') {
++    const key = `${ip}|${deviceLabel}`;
++    setBusy(key);
+     setError(null);
+-    const res = await fetch(`/api/admin/users/${userId}`, {
+-      method: 'PATCH',
++    const res = await fetch(`/api/admin/users/${userId}/devices`, {
++      method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+-      body: JSON.stringify({ restrict_devices: !user.restrict_devices }),
++      body: JSON.stringify({ ip_address: ip, device_label: deviceLabel, status }),
+     });
+     const data = await res.json();
+-    if (!res.ok) {
+-      setError(data.error ?? 'Could not update.');
+-    } else {
+-      setUser({ ...user, restrict_devices: !user.restrict_devices });
+-    }
+-    setSavingRestrict(false);
++    if (!res.ok) setError(data.error ?? 'Could not save decision.');
++    setBusy(null);
++    load();
+   }
+ 
+-  async function approve(ip: string, label: string) {
+-    setBusy(`${ip}|${label}`);
++  async function changeStatus(deviceId: string, status: 'authorized' | 'restricted') {
++    setBusy(deviceId);
+     setError(null);
+-    const res = await fetch(`/api/admin/users/${userId}/devices`, {
+-      method: 'POST',
++    const res = await fetch(`/api/admin/users/${userId}/devices/${deviceId}`, {
++      method: 'PATCH',
+       headers: { 'Content-Type': 'application/json' },
+-      body: JSON.stringify({ ip_address: ip, device_label: label }),
++      body: JSON.stringify({ status }),
+     });
+     const data = await res.json();
+-    if (!res.ok) setError(data.error ?? 'Could not approve device.');
++    if (!res.ok) setError(data.error ?? 'Could not update device.');
+     setBusy(null);
+     load();
+   }
+ 
+-  async function revoke(deviceId: string) {
+-    setBusy(deviceId);
++  async function rename(deviceId: string, label: string) {
+     setError(null);
+     const res = await fetch(`/api/admin/users/${userId}/devices/${deviceId}`, {
+-      method: 'DELETE',
++      method: 'PATCH',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ label: label || null }),
+     });
+     const data = await res.json();
+-    if (!res.ok) setError(data.error ?? 'Could not revoke device.');
+-    setBusy(null);
++    if (!res.ok) setError(data.error ?? 'Could not rename.');
+     load();
+   }
+ 
+-  const isApproved = (ip: string, label: string) =>
+-    approved.some((a) => a.ip_address === ip && a.device_label === label);
++  async function clearDecision(deviceId: string) {
++    setBusy(deviceId);
++    setError(null);
++    const res = await fetch(`/api/admin/users/${userId}/devices/${deviceId}`, { method: 'DELETE' });
++    const data = await res.json();
++    if (!res.ok) setError(data.error ?? 'Could not remove.');
++    setBusy(null);
++    load();
++  }
+ 
+   return (
+     <div>
+-      <Link href="/admin/users" className="font-mono text-[11px] uppercase tracking-widest text-ink-dim transition hover:text-ink">
++      <Link
++        href="/admin/users"
++        className="font-mono text-[11px] uppercase tracking-widest text-ink-dim transition hover:text-ink"
++      >
+         ← Users
+       </Link>
+       <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">Admin</p>
+@@ -122,119 +131,177 @@ export default function UserDevicesPage() {
+         {loading ? 'Loading…' : user?.email ?? 'User'}
+       </h1>
+       <p className="mt-2 max-w-2xl text-sm text-ink-dim">
+-        Control which IP address + device combos this account is allowed to sign in from. IP +
+-        browser/OS is a practical proxy for "device" — browsers don't expose real hardware
+-        model info to websites, so this can't distinguish two people on the exact same network
+-        and browser. Combined with the heartbeat check during video playback, this is enough to
+-        stop most account-sharing in practice.
++        Approving or restricting any IP below turns on device restriction for this account —
++        after that, only <span className="text-ink">Authorized</span> combos can sign in. IP +
++        browser/OS is used as "device" (browsers don't expose real hardware model info).
+       </p>
+ 
+-      {!loading && user && (
+-        <div className="glass-panel mt-6 flex items-center justify-between rounded-xl p-5">
+-          <div>
+-            <p className="text-sm font-medium text-ink">Restrict to approved devices</p>
+-            <p className="mt-1 text-xs text-ink-dim">
+-              {user.restrict_devices
+-                ? 'Only IP + device combos approved below will work for this account.'
+-                : 'Off — this account can sign in from anywhere. Approve at least one device below before turning this on.'}
+-            </p>
+-          </div>
+-          <button
+-            onClick={toggleRestrict}
+-            disabled={savingRestrict}
+-            className={`shrink-0 rounded-full px-4 py-2 text-xs font-medium transition disabled:opacity-60 ${
+-              user.restrict_devices
+-                ? 'bg-signal text-white hover:bg-signal-glow'
+-                : 'border border-vault-border bg-white/60 text-ink-dim hover:text-ink'
+-            }`}
+-          >
+-            {user.restrict_devices ? 'Restriction ON' : 'Restriction OFF'}
+-          </button>
+-        </div>
++      {!loading && user?.restrict_devices && (
++        <p className="mt-4 inline-flex items-center gap-2 rounded-full border border-signal/30 bg-signal/10 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-signal">
++          Restriction active
++        </p>
+       )}
+ 
+       {error && <p className="mt-3 text-xs text-danger">{error}</p>}
+ 
+-      <div className="mt-8">
+-        <p className="font-mono text-[11px] uppercase tracking-widest text-ink-faint">
+-          Approved devices ({approved.length})
+-        </p>
+-        {approved.length === 0 ? (
+-          <p className="mt-3 rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
+-            No approved devices yet.
+-          </p>
+-        ) : (
+-          <div className="mt-3 space-y-2">
+-            {approved.map((d) => (
+-              <div
+-                key={d.id}
+-                className="flex items-center justify-between rounded-xl border border-vault-border bg-vault-900 px-4 py-3 backdrop-blur-xl"
++      <Section title="Authorized IP's" emptyText="No authorized IPs yet.">
++        {authorized.map((d) => (
++          <DeviceRow
++            key={d.id}
++            device={d}
++            busy={busy === d.id}
++            onRename={(label) => rename(d.id, label)}
++            actions={
++              <button
++                disabled={busy === d.id}
++                onClick={() => changeStatus(d.id, 'restricted')}
++                className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+               >
+-                <div>
+-                  <p className="text-sm text-ink">{d.device_label}</p>
+-                  <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+-                    {d.ip_address}
+-                  </p>
+-                </div>
++                Restrict
++              </button>
++            }
++          />
++        ))}
++      </Section>
++
++      <Section title="Unauthorized IP request" emptyText="No pending sign-in attempts.">
++        {pending.map((s) => {
++          const key = `${s.ip_address}|${s.device_label}`;
++          return (
++            <div
++              key={s.id}
++              className="flex items-center justify-between rounded-xl border border-vault-border bg-vault-900 px-4 py-3 backdrop-blur-xl"
++            >
++              <div>
++                <p className="text-sm text-ink">{s.device_label}</p>
++                <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
++                  {s.ip_address} · seen {s.sighting_count}× · last{' '}
++                  {new Date(s.last_seen).toLocaleString()}
++                </p>
++              </div>
++              <div className="flex shrink-0 gap-2">
+                 <button
+-                  disabled={busy === d.id}
+-                  onClick={() => revoke(d.id)}
++                  disabled={busy === key}
++                  onClick={() => decide(s.ip_address, s.device_label, 'authorized')}
++                  className="rounded-md bg-signal px-3 py-1.5 text-xs font-medium text-white transition hover:bg-signal-glow disabled:opacity-50"
++                >
++                  Approve
++                </button>
++                <button
++                  disabled={busy === key}
++                  onClick={() => decide(s.ip_address, s.device_label, 'restricted')}
+                   className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+                 >
+-                  Revoke
++                  Restrict
+                 </button>
+               </div>
+-            ))}
+-          </div>
+-        )}
+-      </div>
++            </div>
++          );
++        })}
++      </Section>
++
++      <Section title="Restricted IP's" emptyText="No restricted IPs.">
++        {restricted.map((d) => (
++          <DeviceRow
++            key={d.id}
++            device={d}
++            busy={busy === d.id}
++            onRename={(label) => rename(d.id, label)}
++            actions={
++              <div className="flex gap-2">
++                <button
++                  disabled={busy === d.id}
++                  onClick={() => changeStatus(d.id, 'authorized')}
++                  className="rounded-md bg-signal px-3 py-1.5 text-xs font-medium text-white transition hover:bg-signal-glow disabled:opacity-50"
++                >
++                  Un-restrict
++                </button>
++                <button
++                  disabled={busy === d.id}
++                  onClick={() => clearDecision(d.id)}
++                  className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:text-ink disabled:opacity-50"
++                >
++                  Remove
++                </button>
++              </div>
++            }
++          />
++        ))}
++      </Section>
++    </div>
++  );
++}
+ 
+-      <div className="mt-8">
+-        <p className="font-mono text-[11px] uppercase tracking-widest text-ink-faint">
+-          Recently seen (last {sightings.length})
++function Section({
++  title,
++  emptyText,
++  children,
++}: {
++  title: string;
++  emptyText: string;
++  children: React.ReactNode;
++}) {
++  const items = Array.isArray(children) ? children : [children];
++  const isEmpty = items.flat().length === 0;
++  return (
++    <div className="mt-8">
++      <p className="font-mono text-[11px] uppercase tracking-widest text-ink-faint">{title}</p>
++      {isEmpty ? (
++        <p className="mt-3 rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
++          {emptyText}
+         </p>
+-        {loading ? (
+-          <p className="mt-3 text-sm text-ink-faint">Loading…</p>
+-        ) : sightings.length === 0 ? (
+-          <p className="mt-3 rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
+-            No sign-ins recorded yet for this account.
+-          </p>
++      ) : (
++        <div className="mt-3 space-y-2">{children}</div>
++      )}
++    </div>
++  );
++}
++
++function DeviceRow({
++  device,
++  actions,
++  onRename,
++}: {
++  device: Device;
++  busy: boolean;
++  actions: React.ReactNode;
++  onRename: (label: string) => void;
++}) {
++  const [label, setLabel] = useState(device.label ?? '');
++  const [editing, setEditing] = useState(false);
++
++  function save() {
++    setEditing(false);
++    if (label !== (device.label ?? '')) onRename(label);
++  }
++
++  return (
++    <div className="flex items-center justify-between gap-3 rounded-xl border border-vault-border bg-vault-900 px-4 py-3 backdrop-blur-xl">
++      <div className="min-w-0 flex-1">
++        {editing ? (
++          <input
++            autoFocus
++            value={label}
++            onChange={(e) => setLabel(e.target.value)}
++            onBlur={save}
++            onKeyDown={(e) => e.key === 'Enter' && save()}
++            placeholder="Name this IP (e.g. Home WiFi)"
++            className="w-full rounded-md border border-vault-border bg-white/70 px-2 py-1 text-sm text-ink outline-none focus:border-signal"
++          />
+         ) : (
+-          <div className="mt-3 space-y-2">
+-            {sightings.map((s) => {
+-              const key = `${s.ip_address}|${s.device_label}`;
+-              const approvedAlready = isApproved(s.ip_address, s.device_label);
+-              return (
+-                <div
+-                  key={s.id}
+-                  className="flex items-center justify-between rounded-xl border border-vault-border bg-vault-900 px-4 py-3 backdrop-blur-xl"
+-                >
+-                  <div>
+-                    <p className="text-sm text-ink">{s.device_label}</p>
+-                    <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+-                      {s.ip_address} · seen {s.sighting_count}× · last{' '}
+-                      {new Date(s.last_seen).toLocaleString()}
+-                    </p>
+-                  </div>
+-                  {approvedAlready ? (
+-                    <span className="rounded-full border border-ok/30 bg-ok/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-ok">
+-                      Approved
+-                    </span>
+-                  ) : (
+-                    <button
+-                      disabled={busy === key}
+-                      onClick={() => approve(s.ip_address, s.device_label)}
+-                      className="rounded-md bg-signal px-3 py-1.5 text-xs font-medium text-white transition hover:bg-signal-glow disabled:opacity-50"
+-                    >
+-                      Approve
+-                    </button>
+-                  )}
+-                </div>
+-              );
+-            })}
+-          </div>
++          <button
++            onClick={() => setEditing(true)}
++            className="text-left text-sm text-ink hover:underline"
++            title="Click to rename"
++          >
++            {device.label || <span className="text-ink-faint">+ Add name</span>}
++          </button>
+         )}
++        <p className="mt-0.5 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
++          {device.ip_address} · {device.device_label}
++        </p>
+       </div>
++      <div className="shrink-0">{actions}</div>
+     </div>
+   );
+ }
+diff --git a/app/api/admin/users/[id]/devices/[deviceId]/route.ts b/app/api/admin/users/[id]/devices/[deviceId]/route.ts
+index dd7cec9..9addce7 100644
+--- a/app/api/admin/users/[id]/devices/[deviceId]/route.ts
++++ b/app/api/admin/users/[id]/devices/[deviceId]/route.ts
+@@ -1,11 +1,53 @@
+ import { NextResponse, type NextRequest } from 'next/server';
+ import { requireAdmin } from '@/lib/auth';
+ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+-import { uuidSchema } from '@/lib/validation';
++import { deviceUpdateSchema, uuidSchema } from '@/lib/validation';
++import { checkRateLimit } from '@/lib/rateLimit';
+ import { logAuditEvent } from '@/lib/audit';
+ 
+ export const dynamic = 'force-dynamic';
+ 
++/** Change status (authorize <-> restrict) and/or rename an existing
++ * device row. */
++export async function PATCH(
++  request: NextRequest,
++  { params }: { params: { id: string; deviceId: string } }
++) {
++  const auth = await requireAdmin();
++  if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++
++  const rl = checkRateLimit(`admin_mutate:${auth.user.email}`, 30, 60_000);
++  if (!rl.allowed) return NextResponse.json({ error: 'Too many requests.' }, { status: 429 });
++
++  const parsedUserId = uuidSchema.safeParse(params.id);
++  const parsedDeviceId = uuidSchema.safeParse(params.deviceId);
++  if (!parsedUserId.success || !parsedDeviceId.success) {
++    return NextResponse.json({ error: 'Invalid id.' }, { status: 400 });
++  }
++
++  const body = await request.json().catch(() => null);
++  const parsed = deviceUpdateSchema.safeParse(body);
++  if (!parsed.success) return NextResponse.json({ error: 'Invalid input.' }, { status: 400 });
++
++  const adminClient = createSupabaseAdminClient();
++  const { data, error } = await adminClient
++    .from('user_devices')
++    .update(parsed.data)
++    .eq('id', parsedDeviceId.data)
++    .eq('user_id', parsedUserId.data)
++    .select('id, status')
++    .maybeSingle();
++
++  if (error || !data) return NextResponse.json({ error: 'Could not update device.' }, { status: 400 });
++
++  await logAuditEvent('ADMIN_ACTION', auth.user.email, parsedUserId.data, {
++    action: parsed.data.status ? `DEVICE_${parsed.data.status.toUpperCase()}` : 'DEVICE_RENAMED',
++    device_id: parsedDeviceId.data,
++  });
++
++  return NextResponse.json({ device: data });
++}
++
+ export async function DELETE(
+   _req: NextRequest,
+   { params }: { params: { id: string; deviceId: string } }
+@@ -26,10 +68,10 @@ export async function DELETE(
+     .eq('id', parsedDeviceId.data)
+     .eq('user_id', parsedUserId.data);
+ 
+-  if (error) return NextResponse.json({ error: 'Could not revoke device.' }, { status: 400 });
++  if (error) return NextResponse.json({ error: 'Could not remove device.' }, { status: 400 });
+ 
+   await logAuditEvent('ADMIN_ACTION', auth.user.email, parsedUserId.data, {
+-    action: 'DEVICE_REVOKED',
++    action: 'DEVICE_DECISION_CLEARED',
+     device_id: parsedDeviceId.data,
+   });
+ 
+diff --git a/app/api/admin/users/[id]/devices/route.ts b/app/api/admin/users/[id]/devices/route.ts
+index 42cc876..beed205 100644
+--- a/app/api/admin/users/[id]/devices/route.ts
++++ b/app/api/admin/users/[id]/devices/route.ts
+@@ -18,10 +18,10 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string
+   if (!parsedId.success) return NextResponse.json({ error: 'Invalid id.' }, { status: 400 });
+ 
+   const adminClient = createSupabaseAdminClient();
+-  const [{ data: approved }, { data: sightings }] = await Promise.all([
++  const [{ data: devices }, { data: sightings }] = await Promise.all([
+     adminClient
+       .from('user_devices')
+-      .select('id, ip_address, device_label, note, created_at')
++      .select('id, ip_address, device_label, status, label, created_at')
+       .eq('user_id', parsedId.data)
+       .order('created_at', { ascending: false }),
+     adminClient
+@@ -29,10 +29,22 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string
+       .select('id, ip_address, device_label, first_seen, last_seen, sighting_count')
+       .eq('user_id', parsedId.data)
+       .order('last_seen', { ascending: false })
+-      .limit(20),
++      .limit(30),
+   ]);
+ 
+-  return NextResponse.json({ approved: approved ?? [], sightings: sightings ?? [] });
++  const decided = new Set((devices ?? []).map((d) => `${d.ip_address}|${d.device_label}`));
++
++  // "Unauthorized IP request" = seen, but neither approved nor
++  // restricted yet — no row in user_devices at all for this combo.
++  const pending = (sightings ?? []).filter(
++    (s) => !decided.has(`${s.ip_address}|${s.device_label}`)
++  );
++
++  return NextResponse.json({
++    authorized: (devices ?? []).filter((d) => d.status === 'authorized'),
++    restricted: (devices ?? []).filter((d) => d.status === 'restricted'),
++    pending,
++  });
+ }
+ 
+ export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+@@ -53,16 +65,31 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
+   const { data, error } = await adminClient
+     .from('user_devices')
+     .upsert(
+-      { user_id: parsedId.data, ip_address: parsed.data.ip_address, device_label: parsed.data.device_label },
++      {
++        user_id: parsedId.data,
++        ip_address: parsed.data.ip_address,
++        device_label: parsed.data.device_label,
++        status: parsed.data.status,
++        label: parsed.data.label ?? null,
++      },
+       { onConflict: 'user_id,ip_address,device_label' }
+     )
+     .select('id')
+     .single();
+ 
+-  if (error) return NextResponse.json({ error: 'Could not approve device.' }, { status: 400 });
++  if (error) return NextResponse.json({ error: 'Could not save device decision.' }, { status: 400 });
++
++  // Approving (or restricting) ANY device for this user is what turns on
++  // enforcement — from that point on, only decided (authorized) combos
++  // work; everything else needs an explicit admin decision.
++  await adminClient
++    .from('authorized_users')
++    .update({ restrict_devices: true })
++    .eq('id', parsedId.data)
++    .eq('restrict_devices', false);
+ 
+   await logAuditEvent('ADMIN_ACTION', auth.user.email, parsedId.data, {
+-    action: 'DEVICE_APPROVED',
++    action: parsed.data.status === 'restricted' ? 'DEVICE_RESTRICTED' : 'DEVICE_APPROVED',
+     ip_address: parsed.data.ip_address,
+     device_label: parsed.data.device_label,
+   });
+diff --git a/lib/auth.ts b/lib/auth.ts
+index 05482b0..5762776 100644
+--- a/lib/auth.ts
++++ b/lib/auth.ts
+@@ -110,6 +110,7 @@ export async function getAuth(): Promise<AuthResult> {
+       .eq('user_id', typedUser.id)
+       .eq('ip_address', ip)
+       .eq('device_label', deviceLabel)
++      .eq('status', 'authorized')
+       .maybeSingle();
+ 
+     if (!approved) {
+diff --git a/lib/validation.ts b/lib/validation.ts
+index b7851ab..fb8c5dd 100644
+--- a/lib/validation.ts
++++ b/lib/validation.ts
+@@ -16,9 +16,18 @@ export const updateAuthorizedUserSchema = z.object({
+   restrict_devices: z.boolean().optional(),
+ });
+ 
++export const deviceStatusSchema = z.enum(['authorized', 'restricted']);
++
+ export const deviceApprovalSchema = z.object({
+   ip_address: z.string().trim().min(1).max(64),
+   device_label: z.string().trim().min(1).max(80),
++  status: deviceStatusSchema.default('authorized'),
++  label: z.string().trim().max(60).optional().nullable(),
++});
++
++export const deviceUpdateSchema = z.object({
++  status: deviceStatusSchema.optional(),
++  label: z.string().trim().max(60).optional().nullable(),
+ });
+ 
+ const safeUrl = z
+diff --git a/supabase/migrations/0004_device_status_label.sql b/supabase/migrations/0004_device_status_label.sql
+new file mode 100644
+index 0000000..6bdb8ba
+--- /dev/null
++++ b/supabase/migrations/0004_device_status_label.sql
+@@ -0,0 +1,15 @@
++-- Adds status ('authorized' | 'restricted') and an admin-given label to
++-- user_devices, splitting the admin device panel into three sections:
++-- Authorized IP's, Unauthorized IP request (pending sightings with no
++-- row here yet), and Restricted IP's.
++--
++-- Run this once against any existing project. Safe to run multiple times.
++
++alter table public.user_devices
++  add column if not exists status text not null default 'authorized'
++  check (status in ('authorized', 'restricted'));
++
++alter table public.user_devices
++  add column if not exists label text;
++
++create index if not exists idx_user_devices_user_status on public.user_devices (user_id, status);
+diff --git a/supabase/schema.sql b/supabase/schema.sql
+index 5d26dbe..639b8be 100644
+--- a/supabase/schema.sql
++++ b/supabase/schema.sql
+@@ -194,12 +194,21 @@ create table if not exists public.user_devices (
+   user_id uuid not null references public.authorized_users (id) on delete cascade,
+   ip_address text not null,
+   device_label text not null default 'Any device',
++  -- 'authorized' = allowed to sign in; 'restricted' = explicitly denied.
++  -- A row existing at all means an admin has made a decision about this
++  -- IP+device combo; sightings with no matching row here are still
++  -- pending ("Unauthorized IP request" in the admin UI).
++  status text not null default 'authorized' check (status in ('authorized', 'restricted')),
++  -- Admin-given friendly name, e.g. "Home WiFi", "College router" — pure
++  -- label, plays no role in the auth check itself.
++  label text,
+   note text,
+   created_at timestamptz not null default now(),
+   unique (user_id, ip_address, device_label)
+ );
+ 
+ create index if not exists idx_user_devices_user on public.user_devices (user_id);
++create index if not exists idx_user_devices_user_status on public.user_devices (user_id, status);
+ 
+ -- ---------------------------------------------------------------------------
+ -- 10. device_sightings — every distinct (ip_address, device_label) combo
