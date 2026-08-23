@@ -1,0 +1,71 @@
+name: Build Android App
+
+# Builds and signs the NexSecurity Android app (a Trusted Web Activity
+# wrapper around https://nexsecurity.vercel.app) using Bubblewrap's
+# official Docker image, so nothing needs to be installed locally — this
+# runs entirely on GitHub's servers, unaffected by local power outages.
+#
+# REQUIRES: twa-manifest.json must already exist at the repo root. That
+# file is generated ONCE via `bubblewrap init` (an interactive step — see
+# android/README.md) and then committed. This workflow only ever runs
+# `bubblewrap build`, which is fully non-interactive and reads that
+# committed config plus the 4 signing secrets below.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   ANDROID_KEYSTORE_BASE64    the .keystore file, base64-encoded
+#   ANDROID_KEYSTORE_PASSWORD
+#   ANDROID_KEY_ALIAS
+#   ANDROID_KEY_PASSWORD
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - 'android-v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Verify twa-manifest.json exists
+        run: |
+          if [ ! -f twa-manifest.json ]; then
+            echo "::error::twa-manifest.json not found at repo root. Run 'bubblewrap init' once (see android/README.md) and commit the result before running this workflow."
+            exit 1
+          fi
+
+      - name: Decode signing keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android.keystore
+
+      - name: Build and sign with Bubblewrap
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e BUBBLEWRAP_KEYSTORE_PASSWORD \
+            -e BUBBLEWRAP_KEY_PASSWORD \
+            ghcr.io/googlechromelabs/bubblewrap:latest \
+            build \
+            --skipPwaValidation \
+            --manifest=/workspace \
+            --signingKeyPath=/workspace/android.keystore \
+            --signingKeyAlias="${{ secrets.ANDROID_KEY_ALIAS }}"
+
+      - name: Remove keystore from disk
+        if: always()
+        run: rm -f android.keystore
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexsecurity-android-${{ github.run_number }}
+          path: |
+            app-release-signed.apk
+            app-release-bundle.aab
+          if-no-files-found: warn
