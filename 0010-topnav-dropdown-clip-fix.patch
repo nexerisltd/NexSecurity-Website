@@ -1,0 +1,40 @@
+From dcbd2a80f9c1100db8dc38e9d6978073eeff071c Mon Sep 17 00:00:00 2001
+From: "MR. ARX" <dev@nexeris.dev>
+Date: Mon, 24 Aug 2026 19:56:02 +0000
+Subject: [PATCH] TopNav: fix profile dropdown being clipped by header's
+ overflow-hidden
+
+overflow-hidden on the header's outer rounded container (added for the
+mobile hamburger accordion's corners) was also clipping the absolutely
+positioned profile dropdown, hiding most of it. Removed it from the
+outer wrapper and moved the bottom rounding onto the mobile nav panel
+itself instead, so the dropdown can render outside the header's bounds.
+---
+ components/TopNav.tsx | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/components/TopNav.tsx b/components/TopNav.tsx
+index 4d939dc..fcb2389 100644
+--- a/components/TopNav.tsx
++++ b/components/TopNav.tsx
+@@ -180,7 +180,7 @@ export function TopNav({
+ 
+   return (
+     <header className="sticky top-3 z-30 px-4">
+-      <div className="glass-panel-solid mx-auto max-w-6xl overflow-hidden rounded-2xl">
++      <div className="glass-panel-solid mx-auto max-w-6xl rounded-2xl">
+         <div className="flex items-center gap-6 px-6 py-3">
+         <div className="flex shrink-0 items-center gap-2">
+           {backHref && (
+@@ -322,7 +322,7 @@ export function TopNav({
+         </div>
+ 
+         {mobileNavOpen && (
+-          <nav className="border-t border-vault-border/70 px-3 py-2 md:hidden">
++          <nav className="rounded-b-2xl border-t border-vault-border/70 px-3 py-2 md:hidden">
+             {items.map((item) => {
+               const active = item.href === activeHref;
+               return (
+-- 
+2.43.0
+

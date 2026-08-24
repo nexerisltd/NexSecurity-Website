@@ -180,7 +180,7 @@ export function TopNav({
 
   return (
     <header className="sticky top-3 z-30 px-4">
-      <div className="glass-panel-solid mx-auto max-w-6xl overflow-hidden rounded-2xl">
+      <div className="glass-panel-solid mx-auto max-w-6xl rounded-2xl">
         <div className="flex items-center gap-6 px-6 py-3">
         <div className="flex shrink-0 items-center gap-2">
           {backHref && (
@@ -322,7 +322,7 @@ export function TopNav({
         </div>
 
         {mobileNavOpen && (
-          <nav className="border-t border-vault-border/70 px-3 py-2 md:hidden">
+          <nav className="rounded-b-2xl border-t border-vault-border/70 px-3 py-2 md:hidden">
             {items.map((item) => {
               const active = item.href === activeHref;
               return (
