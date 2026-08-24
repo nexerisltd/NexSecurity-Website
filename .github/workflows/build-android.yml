@@ -104,7 +104,7 @@ jobs:
         run: |
           TAG="android-build-${{ github.run_number }}"
           URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/app-release-signed.apk"
-          perl -0777 -pi -e "s/(<!-- ANDROID_DOWNLOAD_LINK_START -->).*?(<!-- ANDROID_DOWNLOAD_LINK_END -->)/\$1\n\n[⬇ Download latest APK (build #${{ github.run_number }})](${URL})\n\n\$2/s" README.md
+          perl -0777 -pi -e "s|(<!-- ANDROID_DOWNLOAD_LINK_START -->).*?(<!-- ANDROID_DOWNLOAD_LINK_END -->)|\$1\n\n[⬇ Download latest APK (build #${{ github.run_number }})](${URL})\n\n\$2|s" README.md
 
       - name: Commit updated README
         run: |
