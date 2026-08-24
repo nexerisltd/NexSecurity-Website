@@ -19,6 +19,8 @@ export default function AdminUsersPage() {
   const [newRole, setNewRole] = useState<'USER' | 'ADMIN'>('USER');
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [enforcing, setEnforcing] = useState(false);
+  const [enforceResult, setEnforceResult] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -74,10 +76,49 @@ export default function AdminUsersPage() {
     load();
   }
 
+  async function enforceDeviceRestriction() {
+    if (
+      !confirm(
+        'Turn on device approval for every account right now?\n\n' +
+          'Everyone currently signed in will be blocked from the app on their ' +
+          'very next click, until you approve a device for them from the Devices ' +
+          'page — including people mid-session.'
+      )
+    )
+      return;
+    setEnforcing(true);
+    setError(null);
+    setEnforceResult(null);
+    const res = await fetch('/api/admin/users/enforce-devices', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error ?? 'Could not enforce device restriction.');
+    } else {
+      setEnforceResult(
+        data.updated === 0
+          ? 'Everyone already required device approval — nothing to change.'
+          : `Done — ${data.updated} account${data.updated === 1 ? '' : 's'} now require device approval.`
+      );
+    }
+    setEnforcing(false);
+    load();
+  }
+
   return (
     <div>
       <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">Admin</p>
-      <h1 className="mt-2 font-display text-2xl font-semibold text-ink">Authorized users</h1>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="font-display text-2xl font-semibold text-ink">Authorized users</h1>
+        <button
+          onClick={enforceDeviceRestriction}
+          disabled={enforcing}
+          className="rounded-md border border-signal/30 bg-signal/10 px-3 py-1.5 text-xs font-medium text-signal transition hover:bg-signal/20 disabled:opacity-50"
+          title="Turn on device approval for every account and block everyone until their device is approved"
+        >
+          {enforcing ? 'Working…' : 'Require device approval for everyone'}
+        </button>
+      </div>
+      {enforceResult && <p className="mt-2 text-xs text-ok">{enforceResult}</p>}
 
       <form
         onSubmit={addUser}
