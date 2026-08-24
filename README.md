@@ -403,7 +403,7 @@ released automatically by `.github/workflows/build-android.yml`.
 
 <!-- ANDROID_DOWNLOAD_LINK_START -->
 
-[⬇ Download latest APK](https://github.com/nexerisltd/NexSecurity-Website/releases/latest)
+[⬇ Download latest APK](https://github.com/nexerisltd/NexSecurity-Website/releases/download/android-build-8/NexSecurity-Android_v.1.0.0.apk)
 
 <!-- ANDROID_DOWNLOAD_LINK_END -->
 
