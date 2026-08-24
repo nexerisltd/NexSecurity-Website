@@ -1,0 +1,180 @@
+From 418a5b4696d202fb7a73b6394ae6fa7d2addcdb8 Mon Sep 17 00:00:00 2001
+From: "MR. ARX" <dev@nexeris.dev>
+Date: Mon, 24 Aug 2026 03:43:41 +0000
+Subject: [PATCH] Decrypt Bunny's default AES-128 HLS encryption before
+ streaming download
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bunny Stream encrypts HLS segments with plain AES-128 by default (not
+proprietary DRM) — the previous code just refused any encrypted stream
+outright. Now:
+- parseSegments tracks #EXT-X-KEY state per segment (URI + IV, per HLS
+  spec falling back to the media-sequence-number IV when none is given).
+- Each distinct key URI is fetched once and cached (keys are 16 bytes,
+  normally shared across the whole playlist).
+- Each segment is decrypted with aes-128-cbc via Node's crypto before
+  being written to the response stream.
+- Only genuine DRM (SAMPLE-AES / Widevine / FairPlay key formats) is
+  still rejected with a clear 501, since there's no way to decrypt that
+  without a license server.
+---
+ app/api/video/[id]/hls-download/route.ts | 109 ++++++++++++++++++-----
+ 1 file changed, 89 insertions(+), 20 deletions(-)
+
+diff --git a/app/api/video/[id]/hls-download/route.ts b/app/api/video/[id]/hls-download/route.ts
+index 354469e..b694307 100644
+--- a/app/api/video/[id]/hls-download/route.ts
++++ b/app/api/video/[id]/hls-download/route.ts
+@@ -1,4 +1,5 @@
+ import { NextResponse, type NextRequest } from 'next/server';
++import crypto from 'crypto';
+ import { requireAuthorized } from '@/lib/auth';
+ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+ import { uuidSchema } from '@/lib/validation';
+@@ -83,18 +84,67 @@ function parseVariants(masterText: string, masterUrl: string): Variant[] {
+   return variants;
+ }
+ 
+-/** Pulls segment URIs (in order) out of a media/variant playlist. */
+-function parseSegments(variantText: string, variantUrl: string): { segments: string[]; encrypted: boolean } {
++/** One HLS segment plus whatever AES-128 key/IV state applied to it at
++ * that point in the playlist (Bunny's default HLS encryption — plain
++ * AES-128, not proprietary DRM, so it's decryptable with the delivered key). */
++type Segment = { url: string; keyUri: string | null; iv: Buffer | null; seq: number };
++
++/** Per HLS spec: if the #EXT-X-KEY tag has no IV attribute, the IV is the
++ * segment's media sequence number as a 16-byte big-endian integer. */
++function seqToIv(seq: number): Buffer {
++  const buf = Buffer.alloc(16);
++  buf.writeUInt32BE(seq >>> 0, 12);
++  return buf;
++}
++
++/** Pulls segment URIs (in order) out of a media/variant playlist, tracking
++ * any #EXT-X-KEY state so encrypted segments can be decrypted later.
++ * Returns drm=true only for real DRM (Widevine/FairPlay/SAMPLE-AES) which
++ * genuinely can't be decrypted this way — plain AES-128 is handled. */
++function parseSegments(
++  variantText: string,
++  variantUrl: string
++): { segments: Segment[]; drm: boolean } {
+   const lines = variantText.split('\n').map((l) => l.trim());
+-  const segments: string[] = [];
+-  let encrypted = false;
++  const segments: Segment[] = [];
++  let drm = false;
++  let seq = 0;
++  let currentKeyUri: string | null = null;
++  let currentIv: Buffer | null = null;
+ 
+   for (const line of lines) {
+-    if (line.startsWith('#EXT-X-KEY') && !line.includes('METHOD=NONE')) encrypted = true;
++    if (line.startsWith('#EXT-X-MEDIA-SEQUENCE')) {
++      const m = line.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
++      if (m) seq = parseInt(m[1], 10);
++      continue;
++    }
++    if (line.startsWith('#EXT-X-KEY')) {
++      const methodMatch = line.match(/METHOD=([^,]+)/);
++      const method = methodMatch ? methodMatch[1] : null;
++      if (!method || method === 'NONE') {
++        currentKeyUri = null;
++        currentIv = null;
++      } else if (method === 'AES-128') {
++        const uriMatch = line.match(/URI="([^"]+)"/);
++        currentKeyUri = uriMatch ? new URL(uriMatch[1], variantUrl).toString() : null;
++        const ivMatch = line.match(/IV=0[xX]([0-9A-Fa-f]+)/);
++        currentIv = ivMatch ? Buffer.from(ivMatch[1].padStart(32, '0'), 'hex') : null;
++      } else {
++        // SAMPLE-AES, real DRM (Widevine/FairPlay via KEYFORMAT), etc — no key we can use.
++        drm = true;
++      }
++      continue;
++    }
+     if (!line || line.startsWith('#')) continue;
+-    segments.push(new URL(line, variantUrl).toString());
++    segments.push({
++      url: new URL(line, variantUrl).toString(),
++      keyUri: currentKeyUri,
++      iv: currentIv,
++      seq,
++    });
++    seq++;
+   }
+-  return { segments, encrypted };
++  return { segments, drm };
+ }
+ 
+ /** GET without ?resolution= lists available resolutions.
+@@ -153,11 +203,11 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
+     );
+   }
+   const variantText = await variantRes.text();
+-  const { segments, encrypted } = parseSegments(variantText, variant.url);
++  const { segments, drm } = parseSegments(variantText, variant.url);
+ 
+-  if (encrypted) {
++  if (drm) {
+     return NextResponse.json(
+-      { error: 'This video is encrypted and cannot be downloaded this way yet.' },
++      { error: 'This video uses real DRM protection and cannot be downloaded this way.' },
+       { status: 501 }
+     );
+   }
+@@ -169,22 +219,41 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
+     action: 'HLS_DOWNLOAD',
+     resolution: variant.label,
+     segmentCount: segments.length,
++    encrypted: segments.some((s) => s.keyUri !== null),
+   });
+ 
++  // AES-128 keys are tiny (16 bytes) and typically shared across every
++  // segment in the playlist — fetch each distinct key URI once and reuse.
++  const keyCache = new Map<string, Promise<Buffer>>();
++  function getKey(keyUri: string): Promise<Buffer> {
++    let pending = keyCache.get(keyUri);
++    if (!pending) {
++      pending = fetch(keyUri, { cache: 'no-store', headers: bunnyFetchHeaders() }).then(async (res) => {
++        if (!res.ok) throw new Error(`Key fetch failed (${res.status}): ${keyUri}`);
++        return Buffer.from(await res.arrayBuffer());
++      });
++      keyCache.set(keyUri, pending);
++    }
++    return pending;
++  }
++
+   const stream = new ReadableStream<Uint8Array>({
+     async start(controller) {
+       try {
+-        for (const segUrl of segments) {
+-          const segRes = await fetch(segUrl, { cache: 'no-store', headers: bunnyFetchHeaders() });
+-          if (!segRes.ok || !segRes.body) {
+-            throw new Error(`Segment fetch failed (${segRes.status}): ${segUrl}`);
++        for (const seg of segments) {
++          const segRes = await fetch(seg.url, { cache: 'no-store', headers: bunnyFetchHeaders() });
++          if (!segRes.ok) {
++            throw new Error(`Segment fetch failed (${segRes.status}): ${seg.url}`);
+           }
+-          const reader = segRes.body.getReader();
+-          // eslint-disable-next-line no-constant-condition
+-          while (true) {
+-            const { done, value } = await reader.read();
+-            if (done) break;
+-            if (value) controller.enqueue(value);
++          const raw = Buffer.from(await segRes.arrayBuffer());
++
++          if (seg.keyUri) {
++            const keyBytes = await getKey(seg.keyUri);
++            const iv = seg.iv ?? seqToIv(seg.seq);
++            const decipher = crypto.createDecipheriv('aes-128-cbc', keyBytes, iv);
++            controller.enqueue(new Uint8Array(Buffer.concat([decipher.update(raw), decipher.final()])));
++          } else {
++            controller.enqueue(new Uint8Array(raw));
+           }
+         }
+         controller.close();
+-- 
+2.43.0
+
