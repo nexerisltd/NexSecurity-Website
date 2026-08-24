@@ -1,5 +1,22 @@
 import 'server-only';
-import { headers } from 'next/headers';
+import { cookies, headers } from 'next/headers';
+import { DEVICE_ID_COOKIE } from '@/lib/deviceId';
+
+/**
+ * The device's persistent identity — planted by middleware.ts on first
+ * visit (see lib/deviceId.ts) and never rotated. THIS, not IP, is what
+ * lib/auth.ts matches against user_devices: it survives IP changes
+ * (wifi -> mobile data), unlike the old IP+UA compound key.
+ *
+ * Returns null only on the rare request that reaches a server component
+ * before middleware's Set-Cookie has round-tripped to the browser (e.g.
+ * a prefetch that races the very first response) — callers must treat
+ * that as "identity not yet established" rather than silently trusting
+ * or silently rejecting it (see getAuth() in lib/auth.ts).
+ */
+export function getDeviceId(): string | null {
+  return cookies().get(DEVICE_ID_COOKIE)?.value ?? null;
+}
 
 /**
  * Best-effort client IP. On Vercel, x-forwarded-for carries the real
@@ -7,6 +24,10 @@ import { headers } from 'next/headers';
  * it). This is not spoof-proof against a client who controls their own
  * proxy chain in unusual setups, but it's what every reverse-proxy-based
  * IP allowlist relies on in practice.
+ *
+ * IP is SECONDARY security information only from here on — logged per
+ * device (user_devices.ip_history) for an admin reviewing activity, never
+ * used to decide device identity itself. See lib/auth.ts.
  */
 export function getClientIp(): string {
   const h = headers();
@@ -21,16 +42,16 @@ export function getClientIp(): string {
 }
 
 /**
- * A coarse "device" label derived from the User-Agent header: OS +
+ * A human-readable "device" label derived from the User-Agent header: OS +
  * browser family (e.g. "Windows · Chrome", "Android · Chrome").
  *
- * IMPORTANT: this is NOT a hardware device model. Modern browsers
- * deliberately no longer expose that (Chrome's User-Agent Reduction,
- * Safari, etc. all limit it for privacy reasons) — there is no reliable,
- * spoof-resistant way to read "iPhone 14" vs "iPhone 13" from a plain web
- * request. Combined with IP address, this label is a practical proxy for
- * "which browser install on which network", which is enough to tell two
- * different people apart in the vast majority of real sharing cases.
+ * IMPORTANT: this is NOT a hardware device model, and — unlike before —
+ * it is NOT part of device identity either. Modern browsers deliberately
+ * no longer expose real hardware model info (Chrome's User-Agent
+ * Reduction, Safari, etc.), and IP/UA combos break the moment a phone
+ * hops from wifi to mobile data. Actual identity is getDeviceId() above
+ * (the planted cookie); this label only makes that id readable to a
+ * human admin in the panel ("Windows · Chrome" instead of a bare UUID).
  */
 export function getDeviceLabel(): string {
   const ua = headers().get('user-agent') ?? '';

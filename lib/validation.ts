@@ -16,17 +16,22 @@ export const updateAuthorizedUserSchema = z.object({
   restrict_devices: z.boolean().optional(),
 });
 
-export const deviceStatusSchema = z.enum(['authorized', 'restricted']);
+// 'pending' is set by the system when a device is first seen — never a
+// valid admin decision, so it's excluded from the schemas admins submit
+// against (deviceDecisionSchema / deviceUpdateSchema below).
+export const deviceStatusSchema = z.enum(['pending', 'authorized', 'restricted', 'blocked']);
+export const deviceDecisionStatusSchema = z.enum(['authorized', 'restricted', 'blocked']);
 
-export const deviceApprovalSchema = z.object({
-  ip_address: z.string().trim().min(1).max(64),
-  device_label: z.string().trim().min(1).max(80),
-  status: deviceStatusSchema.default('authorized'),
+// Approve/Reject/Block a specific device_id (a "New Device Request" or an
+// existing row) from the admin panel.
+export const deviceDecisionSchema = z.object({
+  device_id: z.string().uuid(),
+  status: deviceDecisionStatusSchema,
   label: z.string().trim().max(60).optional().nullable(),
 });
 
 export const deviceUpdateSchema = z.object({
-  status: deviceStatusSchema.optional(),
+  status: deviceDecisionStatusSchema.optional(),
   label: z.string().trim().max(60).optional().nullable(),
 });
 

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { updateSession } from '@/lib/supabase/middleware';
+import { DEVICE_ID_COOKIE, DEVICE_ID_COOKIE_OPTIONS } from '@/lib/deviceId';
 
 const PUBLIC_PATHS = [
   '/login',
@@ -11,9 +12,29 @@ const PUBLIC_PATHS = [
   '/.well-known',
 ];
 
+/**
+ * Plants the device-identity cookie on the very first request from a
+ * browser, on EVERY path (not just protected ones) — a visitor's device
+ * identity should already exist by the time they reach /login and sign
+ * in, not get created mid-auth-flow. Mutating request.cookies and
+ * rebuilding NextResponse.next({ request }) (same pattern as
+ * lib/supabase/middleware.ts's updateSession) makes the cookie readable
+ * via next/headers' cookies() later in THIS same request — not just on
+ * the next one.
+ */
 export async function middleware(request: NextRequest) {
+  const isNewDevice = !request.cookies.get(DEVICE_ID_COOKIE)?.value;
+  if (isNewDevice) {
+    request.cookies.set(DEVICE_ID_COOKIE, crypto.randomUUID());
+  }
+  const deviceId = request.cookies.get(DEVICE_ID_COOKIE)!.value;
+
   // Always refresh the session cookie first.
   const response = await updateSession(request);
+
+  if (isNewDevice) {
+    response.cookies.set(DEVICE_ID_COOKIE, deviceId, DEVICE_ID_COOKIE_OPTIONS);
+  }
 
   const { pathname } = request.nextUrl;
   const isPublic =

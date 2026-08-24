@@ -3,23 +3,21 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { relativeTime } from '@/lib/relativeTime';
+
+type IpHistoryEntry = { ip: string; at: string };
 
 type Device = {
   id: string;
+  device_id: string;
   ip_address: string;
+  ip_history: IpHistoryEntry[];
   device_label: string;
-  status: 'authorized' | 'restricted';
+  status: 'pending' | 'authorized' | 'restricted' | 'blocked';
   label: string | null;
-  created_at: string;
-};
-
-type Sighting = {
-  id: string;
-  ip_address: string;
-  device_label: string;
   first_seen: string;
   last_seen: string;
-  sighting_count: number;
+  is_active: boolean;
 };
 
 type UserRow = {
@@ -35,9 +33,11 @@ export default function UserDevicesPage() {
   const userId = params.id;
 
   const [user, setUser] = useState<UserRow | null>(null);
+  const [pending, setPending] = useState<Device[]>([]);
   const [authorized, setAuthorized] = useState<Device[]>([]);
   const [restricted, setRestricted] = useState<Device[]>([]);
-  const [pending, setPending] = useState<Sighting[]>([]);
+  const [blocked, setBlocked] = useState<Device[]>([]);
+  const [activeCount, setActiveCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -55,9 +55,11 @@ export default function UserDevicesPage() {
       setUser(found ?? null);
     }
     if (devicesRes.ok) {
+      setPending(devicesData.pending);
       setAuthorized(devicesData.authorized);
       setRestricted(devicesData.restricted);
-      setPending(devicesData.pending);
+      setBlocked(devicesData.blocked);
+      setActiveCount(devicesData.active_count);
     }
     setLoading(false);
   }
@@ -67,14 +69,13 @@ export default function UserDevicesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  async function decide(ip: string, deviceLabel: string, status: 'authorized' | 'restricted') {
-    const key = `${ip}|${deviceLabel}`;
-    setBusy(key);
+  async function decide(rowId: string, status: 'authorized' | 'restricted' | 'blocked') {
+    setBusy(rowId);
     setError(null);
     const res = await fetch(`/api/admin/users/${userId}/devices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ip_address: ip, device_label: deviceLabel, status }),
+      body: JSON.stringify({ device_id: rowId, status }),
     });
     const data = await res.json();
     if (!res.ok) setError(data.error ?? 'Could not save decision.');
@@ -82,23 +83,9 @@ export default function UserDevicesPage() {
     load();
   }
 
-  async function changeStatus(deviceId: string, status: 'authorized' | 'restricted') {
-    setBusy(deviceId);
+  async function rename(rowId: string, label: string) {
     setError(null);
-    const res = await fetch(`/api/admin/users/${userId}/devices/${deviceId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
-    });
-    const data = await res.json();
-    if (!res.ok) setError(data.error ?? 'Could not update device.');
-    setBusy(null);
-    load();
-  }
-
-  async function rename(deviceId: string, label: string) {
-    setError(null);
-    const res = await fetch(`/api/admin/users/${userId}/devices/${deviceId}`, {
+    const res = await fetch(`/api/admin/users/${userId}/devices/${rowId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ label: label || null }),
@@ -108,10 +95,10 @@ export default function UserDevicesPage() {
     load();
   }
 
-  async function clearDecision(deviceId: string) {
-    setBusy(deviceId);
+  async function remove(rowId: string) {
+    setBusy(rowId);
     setError(null);
-    const res = await fetch(`/api/admin/users/${userId}/devices/${deviceId}`, { method: 'DELETE' });
+    const res = await fetch(`/api/admin/users/${userId}/devices/${rowId}`, { method: 'DELETE' });
     const data = await res.json();
     if (!res.ok) setError(data.error ?? 'Could not remove.');
     setBusy(null);
@@ -131,20 +118,60 @@ export default function UserDevicesPage() {
         {loading ? 'Loading…' : user?.email ?? 'User'}
       </h1>
       <p className="mt-2 max-w-2xl text-sm text-ink-dim">
-        Approving or restricting any IP below turns on device restriction for this account —
-        after that, only <span className="text-ink">Authorized</span> combos can sign in. IP +
-        browser/OS is used as "device" (browsers don't expose real hardware model info).
+        Unlimited devices per account — but every new device needs your approval before it can
+        sign in. Devices are identified by a persistent id, not IP address, so a phone switching
+        from wifi to mobile data stays the same device instead of triggering a new request. IP is
+        kept as history only, for your review.
       </p>
 
-      {!loading && user?.restrict_devices && (
-        <p className="mt-4 inline-flex items-center gap-2 rounded-full border border-signal/30 bg-signal/10 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-signal">
-          Restriction active
-        </p>
-      )}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {!loading && user?.restrict_devices && (
+          <p className="inline-flex items-center gap-2 rounded-full border border-signal/30 bg-signal/10 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-signal">
+            Restriction active
+          </p>
+        )}
+        {!loading && (
+          <p className="inline-flex items-center gap-2 rounded-full border border-vault-border bg-vault-900 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-ink-dim">
+            {activeCount} active session{activeCount === 1 ? '' : 's'}
+          </p>
+        )}
+      </div>
 
       {error && <p className="mt-3 text-xs text-danger">{error}</p>}
 
-      <Section title="Authorized IP's" emptyText="No authorized IPs yet.">
+      <Section title="New Device Requests" emptyText="No pending sign-in attempts.">
+        {pending.map((d) => (
+          <div
+            key={d.id}
+            className="flex items-center justify-between gap-3 rounded-xl border border-vault-border bg-vault-900 px-4 py-3 backdrop-blur-xl"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-ink">{d.device_label}</p>
+              <p className="mt-0.5 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+                {d.ip_address} · first seen {relativeTime(d.first_seen)}
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <button
+                disabled={busy === d.id}
+                onClick={() => decide(d.id, 'authorized')}
+                className="rounded-md bg-signal px-3 py-1.5 text-xs font-medium text-white transition hover:bg-signal-glow disabled:opacity-50"
+              >
+                Approve
+              </button>
+              <button
+                disabled={busy === d.id}
+                onClick={() => decide(d.id, 'restricted')}
+                className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        ))}
+      </Section>
+
+      <Section title="Authorized Devices" emptyText="No authorized devices yet.">
         {authorized.map((d) => (
           <DeviceRow
             key={d.id}
@@ -152,55 +179,30 @@ export default function UserDevicesPage() {
             busy={busy === d.id}
             onRename={(label) => rename(d.id, label)}
             actions={
-              <button
-                disabled={busy === d.id}
-                onClick={() => changeStatus(d.id, 'restricted')}
-                className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
-              >
-                Restrict
-              </button>
+              <div className="flex gap-2">
+                <button
+                  disabled={busy === d.id}
+                  onClick={() => decide(d.id, 'restricted')}
+                  className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+                  title="Revoke — this device will need to be re-approved to sign in again"
+                >
+                  Revoke
+                </button>
+                <button
+                  disabled={busy === d.id}
+                  onClick={() => decide(d.id, 'blocked')}
+                  className="rounded-md border border-danger/40 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+                  title="Block — deny this device permanently, without opening it back up for reconsideration"
+                >
+                  Block
+                </button>
+              </div>
             }
           />
         ))}
       </Section>
 
-      <Section title="Unauthorized IP request" emptyText="No pending sign-in attempts.">
-        {pending.map((s) => {
-          const key = `${s.ip_address}|${s.device_label}`;
-          return (
-            <div
-              key={s.id}
-              className="flex items-center justify-between rounded-xl border border-vault-border bg-vault-900 px-4 py-3 backdrop-blur-xl"
-            >
-              <div>
-                <p className="text-sm text-ink">{s.device_label}</p>
-                <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
-                  {s.ip_address} · seen {s.sighting_count}× · last{' '}
-                  {new Date(s.last_seen).toLocaleString()}
-                </p>
-              </div>
-              <div className="flex shrink-0 gap-2">
-                <button
-                  disabled={busy === key}
-                  onClick={() => decide(s.ip_address, s.device_label, 'authorized')}
-                  className="rounded-md bg-signal px-3 py-1.5 text-xs font-medium text-white transition hover:bg-signal-glow disabled:opacity-50"
-                >
-                  Approve
-                </button>
-                <button
-                  disabled={busy === key}
-                  onClick={() => decide(s.ip_address, s.device_label, 'restricted')}
-                  className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
-                >
-                  Restrict
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </Section>
-
-      <Section title="Restricted IP's" emptyText="No restricted IPs.">
+      <Section title="Rejected Devices" emptyText="No rejected devices.">
         {restricted.map((d) => (
           <DeviceRow
             key={d.id}
@@ -211,14 +213,43 @@ export default function UserDevicesPage() {
               <div className="flex gap-2">
                 <button
                   disabled={busy === d.id}
-                  onClick={() => changeStatus(d.id, 'authorized')}
+                  onClick={() => decide(d.id, 'authorized')}
                   className="rounded-md bg-signal px-3 py-1.5 text-xs font-medium text-white transition hover:bg-signal-glow disabled:opacity-50"
                 >
-                  Un-restrict
+                  Approve
                 </button>
                 <button
                   disabled={busy === d.id}
-                  onClick={() => clearDecision(d.id)}
+                  onClick={() => remove(d.id)}
+                  className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:text-ink disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </div>
+            }
+          />
+        ))}
+      </Section>
+
+      <Section title="Blocked Devices" emptyText="No blocked devices.">
+        {blocked.map((d) => (
+          <DeviceRow
+            key={d.id}
+            device={d}
+            busy={busy === d.id}
+            onRename={(label) => rename(d.id, label)}
+            actions={
+              <div className="flex gap-2">
+                <button
+                  disabled={busy === d.id}
+                  onClick={() => decide(d.id, 'authorized')}
+                  className="rounded-md bg-signal px-3 py-1.5 text-xs font-medium text-white transition hover:bg-signal-glow disabled:opacity-50"
+                >
+                  Unblock
+                </button>
+                <button
+                  disabled={busy === d.id}
+                  onClick={() => remove(d.id)}
                   className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:text-ink disabled:opacity-50"
                 >
                   Remove
@@ -269,39 +300,68 @@ function DeviceRow({
 }) {
   const [label, setLabel] = useState(device.label ?? '');
   const [editing, setEditing] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   function save() {
     setEditing(false);
     if (label !== (device.label ?? '')) onRename(label);
   }
 
+  const history = [...(device.ip_history ?? [])].reverse();
+
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-vault-border bg-vault-900 px-4 py-3 backdrop-blur-xl">
-      <div className="min-w-0 flex-1">
-        {editing ? (
-          <input
-            autoFocus
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            onBlur={save}
-            onKeyDown={(e) => e.key === 'Enter' && save()}
-            placeholder="Name this IP (e.g. Home WiFi)"
-            className="w-full rounded-md border border-vault-border bg-white/70 px-2 py-1 text-sm text-ink outline-none focus:border-signal"
-          />
-        ) : (
-          <button
-            onClick={() => setEditing(true)}
-            className="text-left text-sm text-ink hover:underline"
-            title="Click to rename"
-          >
-            {device.label || <span className="text-ink-faint">+ Add name</span>}
-          </button>
-        )}
-        <p className="mt-0.5 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
-          {device.ip_address} · {device.device_label}
-        </p>
+    <div className="rounded-xl border border-vault-border bg-vault-900 px-4 py-3 backdrop-blur-xl">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            {editing ? (
+              <input
+                autoFocus
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                onBlur={save}
+                onKeyDown={(e) => e.key === 'Enter' && save()}
+                placeholder="Name this device (e.g. Home laptop)"
+                className="w-full rounded-md border border-vault-border bg-white/70 px-2 py-1 text-sm text-ink outline-none focus:border-signal"
+              />
+            ) : (
+              <button
+                onClick={() => setEditing(true)}
+                className="text-left text-sm text-ink hover:underline"
+                title="Click to rename"
+              >
+                {device.label || device.device_label}
+              </button>
+            )}
+            {device.is_active && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-signal/30 bg-signal/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-signal">
+                Active
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+            {device.device_label} · {device.ip_address} · last seen {relativeTime(device.last_seen)}
+          </p>
+          {history.length > 0 && (
+            <button
+              onClick={() => setHistoryOpen((v) => !v)}
+              className="mt-1 font-mono text-[10px] uppercase tracking-widest text-ink-faint underline-offset-2 hover:text-ink hover:underline"
+            >
+              {historyOpen ? 'Hide' : 'Show'} IP history ({history.length})
+            </button>
+          )}
+          {historyOpen && (
+            <ul className="mt-2 space-y-0.5 border-l border-vault-border pl-3">
+              {history.map((entry, i) => (
+                <li key={i} className="font-mono text-[10px] text-ink-faint">
+                  {entry.ip} · {relativeTime(entry.at)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="shrink-0">{actions}</div>
       </div>
-      <div className="shrink-0">{actions}</div>
     </div>
   );
 }

@@ -1,15 +1,20 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
-import { deviceApprovalSchema, uuidSchema } from '@/lib/validation';
+import { deviceDecisionSchema, uuidSchema } from '@/lib/validation';
 import { checkRateLimit } from '@/lib/rateLimit';
 import { logAuditEvent } from '@/lib/audit';
 
 export const dynamic = 'force-dynamic';
 
-// user_devices / device_sightings have no SELECT policy for anyone but
-// admins (see supabase/schema.sql) — read through the admin client,
-// consistent with videos/e_books.
+// A device counts as an active session if it's been seen inside this
+// window — used only to badge "Active" in the admin panel's concurrent
+// session view, never to decide authorization itself.
+const ACTIVE_SESSION_WINDOW_MS = 5 * 60 * 1000;
+
+// user_devices has no SELECT policy for anyone but admins (see
+// supabase/schema.sql) — read through the admin client, consistent with
+// videos/e_books.
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAdmin();
   if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
@@ -18,35 +23,31 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   if (!parsedId.success) return NextResponse.json({ error: 'Invalid id.' }, { status: 400 });
 
   const adminClient = createSupabaseAdminClient();
-  const [{ data: devices }, { data: sightings }] = await Promise.all([
-    adminClient
-      .from('user_devices')
-      .select('id, ip_address, device_label, status, label, created_at')
-      .eq('user_id', parsedId.data)
-      .order('created_at', { ascending: false }),
-    adminClient
-      .from('device_sightings')
-      .select('id, ip_address, device_label, first_seen, last_seen, sighting_count')
-      .eq('user_id', parsedId.data)
-      .order('last_seen', { ascending: false })
-      .limit(30),
-  ]);
+  const { data: devices, error } = await adminClient
+    .from('user_devices')
+    .select('id, device_id, ip_address, ip_history, device_label, status, label, first_seen, last_seen, created_at')
+    .eq('user_id', parsedId.data)
+    .order('last_seen', { ascending: false });
 
-  const decided = new Set((devices ?? []).map((d) => `${d.ip_address}|${d.device_label}`));
+  if (error) return NextResponse.json({ error: 'Could not load devices.' }, { status: 400 });
 
-  // "Unauthorized IP request" = seen, but neither approved nor
-  // restricted yet — no row in user_devices at all for this combo.
-  const pending = (sightings ?? []).filter(
-    (s) => !decided.has(`${s.ip_address}|${s.device_label}`)
-  );
+  const activeCutoff = Date.now() - ACTIVE_SESSION_WINDOW_MS;
+  const withActive = (devices ?? []).map((d) => ({
+    ...d,
+    is_active: d.status === 'authorized' && new Date(d.last_seen).getTime() >= activeCutoff,
+  }));
 
   return NextResponse.json({
-    authorized: (devices ?? []).filter((d) => d.status === 'authorized'),
-    restricted: (devices ?? []).filter((d) => d.status === 'restricted'),
-    pending,
+    pending: withActive.filter((d) => d.status === 'pending'),
+    authorized: withActive.filter((d) => d.status === 'authorized'),
+    restricted: withActive.filter((d) => d.status === 'restricted'),
+    blocked: withActive.filter((d) => d.status === 'blocked'),
+    active_count: withActive.filter((d) => d.is_active).length,
   });
 }
 
+/** Decide (approve/reject/block) a device — a pending request or an
+ * existing row for this user. */
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAdmin();
   if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
@@ -58,30 +59,25 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   if (!parsedId.success) return NextResponse.json({ error: 'Invalid id.' }, { status: 400 });
 
   const body = await request.json().catch(() => null);
-  const parsed = deviceApprovalSchema.safeParse(body);
+  const parsed = deviceDecisionSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input.' }, { status: 400 });
 
   const adminClient = createSupabaseAdminClient();
   const { data, error } = await adminClient
     .from('user_devices')
-    .upsert(
-      {
-        user_id: parsedId.data,
-        ip_address: parsed.data.ip_address,
-        device_label: parsed.data.device_label,
-        status: parsed.data.status,
-        label: parsed.data.label ?? null,
-      },
-      { onConflict: 'user_id,ip_address,device_label' }
-    )
-    .select('id')
-    .single();
+    .update({ status: parsed.data.status, label: parsed.data.label ?? undefined })
+    .eq('id', parsed.data.device_id)
+    .eq('user_id', parsedId.data)
+    .select('id, status')
+    .maybeSingle();
 
-  if (error) return NextResponse.json({ error: 'Could not save device decision.' }, { status: 400 });
+  if (error || !data) {
+    return NextResponse.json({ error: 'Could not save device decision.' }, { status: 400 });
+  }
 
-  // Approving (or restricting) ANY device for this user is what turns on
-  // enforcement — from that point on, only decided (authorized) combos
-  // work; everything else needs an explicit admin decision.
+  // Deciding on a device is what turns on enforcement for accounts that
+  // haven't had it explicitly toggled yet — from that point on, only
+  // authorized devices work; everything else needs an explicit decision.
   await adminClient
     .from('authorized_users')
     .update({ restrict_devices: true })
@@ -89,10 +85,9 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     .eq('restrict_devices', false);
 
   await logAuditEvent('ADMIN_ACTION', auth.user.email, parsedId.data, {
-    action: parsed.data.status === 'restricted' ? 'DEVICE_RESTRICTED' : 'DEVICE_APPROVED',
-    ip_address: parsed.data.ip_address,
-    device_label: parsed.data.device_label,
+    action: `DEVICE_${parsed.data.status.toUpperCase()}`,
+    device_id: parsed.data.device_id,
   });
 
-  return NextResponse.json({ device: data }, { status: 201 });
+  return NextResponse.json({ device: data }, { status: 200 });
 }

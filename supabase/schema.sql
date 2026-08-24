@@ -182,55 +182,48 @@ create table if not exists public.e_books (
 create index if not exists idx_e_books_board_sort on public.e_books (board_id, sort_order);
 
 -- ---------------------------------------------------------------------------
--- 9. user_devices — the actual allowlist for accounts with
---    restrict_devices = true on authorized_users. An admin adds rows here
---    (normally by "approving" a row from device_sightings below); a
---    request only passes the device check in lib/auth.ts if BOTH the IP
---    and device_label of the incoming request match a row here for that
---    user.
+-- 9. user_devices — one row per (user, device) for accounts with
+--    restrict_devices = true on authorized_users. "Device" here means
+--    device_id: a random id middleware.ts plants in a long-lived cookie
+--    the first time a browser is ever seen (see lib/deviceId.ts), NOT an
+--    IP address — IP changes constantly (wifi <-> mobile data) and is
+--    kept only as history (ip_history) for an admin reviewing activity,
+--    never used to decide identity. A brand-new device_id creates its own
+--    row here with status 'pending' the first time its user signs in; an
+--    admin decision (Approve/Reject/Block) is what changes that status.
 -- ---------------------------------------------------------------------------
 create table if not exists public.user_devices (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.authorized_users (id) on delete cascade,
+  device_id uuid not null,
+  -- Most recent IP seen for this device — convenience display column;
+  -- ip_history below is the actual record used for review.
   ip_address text not null,
-  device_label text not null default 'Any device',
-  -- 'authorized' = allowed to sign in; 'restricted' = explicitly denied.
-  -- A row existing at all means an admin has made a decision about this
-  -- IP+device combo; sightings with no matching row here are still
-  -- pending ("Unauthorized IP request" in the admin UI).
-  status text not null default 'authorized' check (status in ('authorized', 'restricted')),
-  -- Admin-given friendly name, e.g. "Home WiFi", "College router" — pure
-  -- label, plays no role in the auth check itself.
+  -- Append-only, capped history of {ip, at} the device has been seen
+  -- from. Never consulted for the auth decision itself (device_id is),
+  -- only shown to an admin as secondary security context.
+  ip_history jsonb not null default '[]'::jsonb,
+  device_label text not null default 'Unknown device',
+  -- pending    = seen, not yet decided by an admin (a "New Device Request")
+  -- authorized = admin-approved; can sign in normally
+  -- restricted = admin-rejected ("Rejected" in the admin UI); can be
+  --              reconsidered later
+  -- blocked    = admin's stronger, deliberate "never let this device in"
+  status text not null default 'pending' check (status in ('pending', 'authorized', 'restricted', 'blocked')),
+  -- Admin-given friendly name, e.g. "Home WiFi laptop" — pure label,
+  -- plays no role in the auth check itself.
   label text,
   note text,
+  first_seen timestamptz not null default now(),
+  last_seen timestamptz not null default now(),
   created_at timestamptz not null default now(),
-  unique (user_id, ip_address, device_label)
+  unique (user_id, device_id)
 );
 
 create index if not exists idx_user_devices_user on public.user_devices (user_id);
 create index if not exists idx_user_devices_user_status on public.user_devices (user_id, status);
-
--- ---------------------------------------------------------------------------
--- 10. device_sightings — every distinct (ip_address, device_label) combo
---     ever seen for a user, deduped, with a running count and last-seen
---     time. Recorded on every authorized request regardless of whether
---     restrict_devices is on, so an admin has real data to review BEFORE
---     turning restriction on for a suspicious account. One row per combo
---     (upserted), not a full request log — this is bounded and cheap to
---     keep, unlike audit_logs.
--- ---------------------------------------------------------------------------
-create table if not exists public.device_sightings (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references public.authorized_users (id) on delete cascade,
-  ip_address text not null,
-  device_label text not null default 'Unknown device',
-  first_seen timestamptz not null default now(),
-  last_seen timestamptz not null default now(),
-  sighting_count integer not null default 1,
-  unique (user_id, ip_address, device_label)
-);
-
-create index if not exists idx_device_sightings_user on public.device_sightings (user_id, last_seen desc);
+create index if not exists idx_user_devices_device_id on public.user_devices (device_id);
+create index if not exists idx_user_devices_last_seen on public.user_devices (user_id, last_seen desc);
 
 -- ============================================================================
 -- ROW LEVEL SECURITY
@@ -246,7 +239,6 @@ alter table public.video_playback_tokens enable row level security;
 alter table public.video_resources enable row level security;
 alter table public.e_books enable row level security;
 alter table public.user_devices enable row level security;
-alter table public.device_sightings enable row level security;
 
 -- Helper: is the currently authenticated user an ACTIVE authorized user?
 create or replace function public.is_authorized() returns boolean as $$
@@ -333,16 +325,12 @@ drop policy if exists e_books_admin_all on public.e_books;
 create policy e_books_admin_all on public.e_books
   for all using (public.is_admin()) with check (public.is_admin());
 
--- user_devices / device_sightings: admin-only, same as e_books. Read and
--- written from lib/auth.ts via the service-role admin client (this is a
+-- user_devices: admin-only, same as e_books. Read and written from
+-- lib/auth.ts via the service-role admin client (this is a
 -- security-check code path, consistent with how video authorization
 -- already works), and from the admin API routes for the management UI.
 drop policy if exists user_devices_admin_all on public.user_devices;
 create policy user_devices_admin_all on public.user_devices
-  for all using (public.is_admin()) with check (public.is_admin());
-
-drop policy if exists device_sightings_admin_all on public.device_sightings;
-create policy device_sightings_admin_all on public.device_sightings
   for all using (public.is_admin()) with check (public.is_admin());
 
 -- audit_logs: admins can read; inserts happen via service-role from

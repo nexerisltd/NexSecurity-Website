@@ -1,7 +1,7 @@
 import 'server-only';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
-import { getClientIp, getDeviceLabel } from '@/lib/requestInfo';
+import { getClientIp, getDeviceLabel, getDeviceId } from '@/lib/requestInfo';
 
 export type AuthorizedUser = {
   id: string;
@@ -11,44 +11,94 @@ export type AuthorizedUser = {
   restrict_devices: boolean;
 };
 
+export type DeviceStatus = 'pending' | 'authorized' | 'restricted' | 'blocked';
+
 export type AuthResult =
   | { state: 'UNAUTHENTICATED' }
   | { state: 'UNAUTHORIZED'; email: string }
-  | { state: 'DEVICE_BLOCKED'; email: string; ip: string; deviceLabel: string }
+  | { state: 'DEVICE_BLOCKED'; email: string; ip: string; deviceLabel: string; deviceStatus: DeviceStatus | 'unknown' }
   | { state: 'AUTHORIZED'; email: string; user: AuthorizedUser };
 
+/** How many recent {ip, at} entries to keep per device. Bounded so a
+ * device that roams a lot doesn't grow this row forever — an admin
+ * reviewing a device only needs recent history, not a full log
+ * (audit_logs is where a full trail belongs). */
+const IP_HISTORY_LIMIT = 20;
+
 /**
- * Fire-and-forget upsert of "this user was just seen from this IP +
- * device". Recorded for EVERY authorized request, regardless of whether
- * restrict_devices is on, so an admin reviewing a suspicious account has
- * real history to approve from instead of a blank list. Never blocks or
- * throws into the caller.
+ * Finds (or creates, as 'pending') this user's row for THIS device_id,
+ * records the current IP into its history, and returns the device's
+ * current status.
+ *
+ * device_id — not IP, not User-Agent — is the device's identity (see
+ * lib/deviceId.ts). This is what makes "1 account = unlimited devices"
+ * actually work: the same phone stays the same device across a wifi ->
+ * mobile-data switch, instead of looking like a brand-new device every
+ * time its IP changes.
+ *
+ * Called for EVERY authorized request, regardless of whether
+ * restrict_devices is on, so an admin reviewing a suspicious account (or
+ * turning restriction on for the first time) has real device history to
+ * decide from instead of a blank list. Never throws into the caller.
  */
-async function recordDeviceSighting(userId: string, ip: string, deviceLabel: string) {
+async function upsertDeviceAndGetStatus(
+  userId: string,
+  deviceId: string,
+  ip: string,
+  deviceLabel: string
+): Promise<DeviceStatus> {
   try {
     const adminClient = createSupabaseAdminClient();
+    const nowIso = new Date().toISOString();
+
     const { data: existing } = await adminClient
-      .from('device_sightings')
-      .select('id, sighting_count')
+      .from('user_devices')
+      .select('id, status, ip_history')
       .eq('user_id', userId)
-      .eq('ip_address', ip)
-      .eq('device_label', deviceLabel)
+      .eq('device_id', deviceId)
       .maybeSingle();
 
     if (existing) {
+      const history: { ip: string; at: string }[] = Array.isArray(existing.ip_history)
+        ? existing.ip_history
+        : [];
+      const alreadyKnown = history.some((entry) => entry.ip === ip);
+      const nextHistory = alreadyKnown
+        ? history
+        : [...history, { ip, at: nowIso }].slice(-IP_HISTORY_LIMIT);
+
       await adminClient
-        .from('device_sightings')
-        .update({ last_seen: new Date().toISOString(), sighting_count: existing.sighting_count + 1 })
+        .from('user_devices')
+        .update({
+          last_seen: nowIso,
+          ip_address: ip,
+          ip_history: nextHistory,
+          device_label: deviceLabel,
+        })
         .eq('id', existing.id);
-    } else {
-      await adminClient.from('device_sightings').insert({
-        user_id: userId,
-        ip_address: ip,
-        device_label: deviceLabel,
-      });
+
+      return existing.status as DeviceStatus;
     }
+
+    // Never seen before for this user -> a brand-new "New Device
+    // Request", pending admin approval.
+    await adminClient.from('user_devices').insert({
+      user_id: userId,
+      device_id: deviceId,
+      ip_address: ip,
+      ip_history: [{ ip, at: nowIso }],
+      device_label: deviceLabel,
+      status: 'pending',
+      first_seen: nowIso,
+      last_seen: nowIso,
+    });
+    return 'pending';
   } catch (err) {
-    console.error('[auth] failed to record device sighting', err);
+    console.error('[auth] failed to upsert device', err);
+    // Fail closed only for the caller that actually cares (restricted
+    // accounts check the return value); for unrestricted accounts this
+    // is fire-and-forget and the error never reaches anyone.
+    return 'pending';
   }
 }
 
@@ -59,13 +109,14 @@ async function recordDeviceSighting(userId: string, ip: string, deviceLabel: str
  *  - the session itself is re-validated against Supabase Auth (server-side)
  *  - the email is looked up in authorized_users through RLS, which only
  *    lets the caller see their own row (see supabase/schema.sql)
- *  - if that account has restrict_devices on, the request's IP + coarse
- *    device label (see lib/requestInfo.ts) must match a row an admin
- *    explicitly approved in user_devices — this is what stops one
- *    account being shared across many people's devices at once (see
- *    app/admin/users/[id]/page.tsx and components/VideoPlayer.tsx's
- *    heartbeat, which re-runs this check periodically during playback so
- *    an already-open tab gets cut off too, not just future page loads)
+ *  - if that account has restrict_devices on, the request's device_id
+ *    (see lib/deviceId.ts) must have status 'authorized' in
+ *    user_devices — an admin explicitly approved it — or the request is
+ *    DEVICE_BLOCKED. This is what stops one account being shared across
+ *    many people's devices at once (see app/admin/users/[id]/page.tsx
+ *    and components/VideoPlayer.tsx's heartbeat, which re-runs this
+ *    check periodically during playback so an already-open tab gets cut
+ *    off too, not just future page loads).
  *
  * A user reaching this point with a valid session but no ACTIVE row in
  * authorized_users is UNAUTHORIZED, full stop — regardless of anything
@@ -96,26 +147,32 @@ export async function getAuth(): Promise<AuthResult> {
   const typedUser = authorizedUser as AuthorizedUser;
   const ip = getClientIp();
   const deviceLabel = getDeviceLabel();
+  const deviceId = getDeviceId();
 
-  // Always record the sighting — even when not currently restricted —
-  // so the admin panel has data to approve from the moment restriction
-  // is turned on, not after.
-  void recordDeviceSighting(typedUser.id, ip, deviceLabel);
+  if (!deviceId) {
+    // The device-identity cookie hasn't round-tripped to the browser yet
+    // (see lib/deviceId.ts) — extremely rare in practice, since it's
+    // planted on every path including the OAuth redirect chain that gets
+    // a user here in the first place. Only accounts under restriction
+    // need to care; treat it as "not yet approved" rather than guessing.
+    if (typedUser.restrict_devices) {
+      return { state: 'DEVICE_BLOCKED', email: user.email, ip, deviceLabel, deviceStatus: 'unknown' };
+    }
+    return { state: 'AUTHORIZED', email: user.email, user: typedUser };
+  }
 
   if (typedUser.restrict_devices) {
-    const adminClient = createSupabaseAdminClient();
-    const { data: approved } = await adminClient
-      .from('user_devices')
-      .select('id')
-      .eq('user_id', typedUser.id)
-      .eq('ip_address', ip)
-      .eq('device_label', deviceLabel)
-      .eq('status', 'authorized')
-      .maybeSingle();
-
-    if (!approved) {
-      return { state: 'DEVICE_BLOCKED', email: user.email, ip, deviceLabel };
+    // Restriction is on for this account: the status decision gates
+    // access, so it must be awaited before we can answer.
+    const status = await upsertDeviceAndGetStatus(typedUser.id, deviceId, ip, deviceLabel);
+    if (status !== 'authorized') {
+      return { state: 'DEVICE_BLOCKED', email: user.email, ip, deviceLabel, deviceStatus: status };
     }
+  } else {
+    // Not restricted — still record the sighting so an admin has real
+    // device history to review the moment they turn restriction on, but
+    // don't make this request wait on it.
+    void upsertDeviceAndGetStatus(typedUser.id, deviceId, ip, deviceLabel);
   }
 
   return {

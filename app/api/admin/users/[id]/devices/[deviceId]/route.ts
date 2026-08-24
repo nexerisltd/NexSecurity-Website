@@ -7,8 +7,10 @@ import { logAuditEvent } from '@/lib/audit';
 
 export const dynamic = 'force-dynamic';
 
-/** Change status (authorize <-> restrict) and/or rename an existing
- * device row. */
+/** Change status (authorize / reject / block) and/or rename an existing
+ * device row. `deviceId` in the URL is the row's own id (user_devices.id),
+ * not the device's persistent device_id cookie value — matches the
+ * folder param name already used by the admin UI. */
 export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string; deviceId: string } }
