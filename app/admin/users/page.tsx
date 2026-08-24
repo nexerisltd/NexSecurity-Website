@@ -80,9 +80,10 @@ export default function AdminUsersPage() {
     if (
       !confirm(
         'Turn on device approval for every account right now?\n\n' +
-          'Everyone currently signed in will be blocked from the app on their ' +
+          'Everyone else currently signed in will be blocked from the app on their ' +
           'very next click, until you approve a device for them from the Devices ' +
-          'page — including people mid-session.'
+          'page. This device (the one you\'re using right now) is auto-approved, ' +
+          'so you won\'t be locked out yourself.'
       )
     )
       return;

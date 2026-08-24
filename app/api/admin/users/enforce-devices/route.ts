@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { getClientIp, getDeviceLabel, getDeviceId } from '@/lib/requestInfo';
 import { checkRateLimit } from '@/lib/rateLimit';
 import { logAuditEvent } from '@/lib/audit';
 
@@ -23,6 +24,14 @@ export const dynamic = 'force-dynamic';
  * user_devices for their browser (see upsertDeviceAndGetStatus in
  * lib/auth.ts) — exactly the row this endpoint's caller then approves
  * from app/admin/users/[id]/page.tsx.
+ *
+ * IMPORTANT self-lockout guard: the admin clicking this button is
+ * themselves an ACTIVE account, on some device right now — without this
+ * step they'd get blocked by their own action on their very next click,
+ * with no way back into the admin panel to approve themselves. So this
+ * pre-authorizes the CALLER's current device_id before flipping the
+ * switch, using the same identity the click itself just proved is
+ * legitimate (a valid admin session making this exact request).
  */
 export async function POST() {
   const auth = await requireAdmin();
@@ -32,6 +41,28 @@ export async function POST() {
   if (!rl.allowed) return NextResponse.json({ error: 'Too many requests.' }, { status: 429 });
 
   const adminClient = createSupabaseAdminClient();
+
+  const callerDeviceId = getDeviceId();
+  if (callerDeviceId) {
+    const nowIso = new Date().toISOString();
+    const ip = getClientIp();
+    const deviceLabel = getDeviceLabel();
+    await adminClient.from('user_devices').upsert(
+      {
+        user_id: auth.user.id,
+        device_id: callerDeviceId,
+        ip_address: ip,
+        ip_history: [{ ip, at: nowIso }],
+        device_label: deviceLabel,
+        status: 'authorized',
+        label: 'This device (auto-approved when restriction was turned on)',
+        first_seen: nowIso,
+        last_seen: nowIso,
+      },
+      { onConflict: 'user_id,device_id', ignoreDuplicates: false }
+    );
+  }
+
   const { data, error } = await adminClient
     .from('authorized_users')
     .update({ restrict_devices: true })
@@ -46,7 +77,8 @@ export async function POST() {
   await logAuditEvent('ADMIN_ACTION', auth.user.email, 'ALL_USERS', {
     action: 'DEVICE_RESTRICTION_ENFORCED_FOR_ALL',
     updated_count: updatedCount,
+    caller_device_auto_authorized: Boolean(callerDeviceId),
   });
 
-  return NextResponse.json({ updated: updatedCount });
+  return NextResponse.json({ updated: updatedCount, selfAuthorized: Boolean(callerDeviceId) });
 }
