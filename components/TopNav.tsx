@@ -73,6 +73,28 @@ export function TopNav({
   const [loggingOut, setLoggingOut] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  // Google profile picture/name from the Supabase auth session itself
+  // (user_metadata.avatar_url / full_name) — not stored in our own
+  // authorized_users table, so this is fetched client-side once on mount.
+  // Falls back to the email-derived name/initials below if unavailable.
+  const [googleProfile, setGoogleProfile] = useState<{ avatarUrl: string | null; fullName: string | null } | null>(
+    null
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createSupabaseBrowserClient();
+    supabase.auth.getUser().then(({ data }) => {
+      if (cancelled) return;
+      const meta = data.user?.user_metadata as { avatar_url?: string; picture?: string; full_name?: string } | undefined;
+      if (meta) {
+        setGoogleProfile({ avatarUrl: meta.avatar_url ?? meta.picture ?? null, fullName: meta.full_name ?? null });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const items: NavItem[] = [
     { href: '/', label: 'Home', icon: ICONS.home, match: (p) => p === '/' },
@@ -112,13 +134,15 @@ export function TopNav({
     router.refresh();
   }
 
-  // No display-name field in the schema — derive a readable name from the
-  // email's local part (e.g. "arabi.islam" -> "Arabi Islam") rather than
-  // showing the raw address in the header.
-  const displayName = email
-    .split('@')[0]
-    .replace(/[._-]+/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  // Prefer the real Google name; fall back to one derived from the email's
+  // local part (e.g. "arabi.islam" -> "Arabi Islam") if metadata hasn't
+  // loaded yet or isn't present.
+  const displayName =
+    googleProfile?.fullName ||
+    email
+      .split('@')[0]
+      .replace(/[._-]+/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase());
   const initials = displayName
     .split(' ')
     .filter(Boolean)
@@ -127,8 +151,8 @@ export function TopNav({
     .join('');
 
   return (
-    <header className="sticky top-0 z-30 border-b border-white/60 bg-white/70 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
+    <header className="sticky top-3 z-30 px-4">
+      <div className="glass-panel-solid mx-auto flex max-w-6xl items-center gap-6 rounded-2xl px-6 py-3">
         <div className="flex shrink-0 items-center gap-2">
           {backHref && (
             <Link
@@ -154,11 +178,11 @@ export function TopNav({
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-sm font-medium transition lg:px-3 ${
                   active ? 'bg-signal/10 text-signal' : 'text-ink-dim hover:bg-vault-600 hover:text-ink'
                 }`}
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">
                   {item.icon}
                 </svg>
                 {item.label}
@@ -168,7 +192,7 @@ export function TopNav({
         </nav>
 
         <div className="ml-auto flex items-center gap-3">
-          <div className="hidden items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint sm:flex">
+          <div className="hidden items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint lg:flex">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8" />
               <path d="m20 20-3.5-3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -200,9 +224,23 @@ export function TopNav({
               onClick={() => setMenuOpen((v) => !v)}
               className="flex items-center gap-2 rounded-full py-1 pl-1 pr-2 transition hover:bg-vault-600"
             >
-              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-signal/15 text-xs font-semibold text-signal">
-                {initials || '?'}
-              </span>
+              {googleProfile?.avatarUrl ? (
+                // Google-hosted avatar (lh3.googleusercontent.com etc) — a
+                // plain <img> rather than next/image since the host isn't
+                // (and shouldn't need to be) in next.config.js's image
+                // allowlist for a single small profile picture.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={googleProfile.avatarUrl}
+                  alt=""
+                  className="h-8 w-8 rounded-full border border-white/70 object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-signal/15 text-xs font-semibold text-signal">
+                  {initials || '?'}
+                </span>
+              )}
               <span className="hidden text-left leading-tight sm:block">
                 <span className="block text-xs font-semibold text-ink">{displayName}</span>
                 <span className="block text-[11px] text-ink-faint">{isAdmin ? 'Admin' : 'Member'}</span>
