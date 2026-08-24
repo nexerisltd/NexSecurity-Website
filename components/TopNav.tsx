@@ -72,6 +72,7 @@ export function TopNav({
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   // Google profile picture/name from the Supabase auth session itself
   // (user_metadata.avatar_url / full_name) — not stored in our own
@@ -118,6 +119,11 @@ export function TopNav({
 
   const activeHref = items.find((i) => i.match(pathname))?.href ?? items[0].href;
 
+  // Close the mobile nav sheet automatically whenever navigation happens.
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
+
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
@@ -152,7 +158,8 @@ export function TopNav({
 
   return (
     <header className="sticky top-3 z-30 px-4">
-      <div className="glass-panel-solid mx-auto flex max-w-6xl items-center gap-6 rounded-2xl px-6 py-3">
+      <div className="glass-panel-solid mx-auto max-w-6xl overflow-hidden rounded-2xl">
+        <div className="flex items-center gap-6 px-6 py-3">
         <div className="flex shrink-0 items-center gap-2">
           {backHref && (
             <Link
@@ -190,6 +197,21 @@ export function TopNav({
             );
           })}
         </nav>
+
+        <button
+          onClick={() => setMobileNavOpen((v) => !v)}
+          aria-label="Toggle navigation menu"
+          aria-expanded={mobileNavOpen}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-ink-dim transition hover:bg-vault-600 hover:text-ink md:hidden"
+        >
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            {mobileNavOpen ? (
+              <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            ) : (
+              <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            )}
+          </svg>
+        </button>
 
         <div className="ml-auto flex items-center gap-3">
           <div className="hidden items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint lg:flex">
@@ -275,6 +297,29 @@ export function TopNav({
             )}
           </div>
         </div>
+        </div>
+
+        {mobileNavOpen && (
+          <nav className="border-t border-vault-border/70 px-3 py-2 md:hidden">
+            {items.map((item) => {
+              const active = item.href === activeHref;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+                    active ? 'bg-signal/10 text-signal' : 'text-ink-dim hover:bg-vault-600 hover:text-ink'
+                  }`}
+                >
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    {item.icon}
+                  </svg>
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+        )}
       </div>
     </header>
   );
