@@ -125,12 +125,34 @@ export function TopNav({
   }, [pathname]);
 
   useEffect(() => {
-    function onClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    if (!menuOpen) return;
+    function onPointerDown(e: MouseEvent | TouchEvent) {
+      const target = e.target as Node;
+      // composedPath handles clicks that originate inside portaled/shadow
+      // content more reliably than a plain .contains() check.
+      const path = 'composedPath' in e ? (e as MouseEvent).composedPath() : [];
+      const inside = path.length ? path.includes(menuRef.current as EventTarget) : !!menuRef.current?.contains(target);
+      if (!inside) setMenuOpen(false);
     }
-    document.addEventListener('mousedown', onClickOutside);
-    return () => document.removeEventListener('mousedown', onClickOutside);
-  }, []);
+    function onEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMenuOpen(false);
+    }
+    // Listener is only attached while the menu is open, and only after this
+    // tick — otherwise the same click that just opened the menu (mousedown
+    // fires before the button's own click handler resolves) can be seen as
+    // an "outside" click on some browsers and immediately close it again.
+    const id = window.setTimeout(() => {
+      document.addEventListener('mousedown', onPointerDown);
+      document.addEventListener('touchstart', onPointerDown);
+      document.addEventListener('keydown', onEscape);
+    }, 0);
+    return () => {
+      window.clearTimeout(id);
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('touchstart', onPointerDown);
+      document.removeEventListener('keydown', onEscape);
+    };
+  }, [menuOpen]);
 
   async function handleLogout() {
     setLoggingOut(true);

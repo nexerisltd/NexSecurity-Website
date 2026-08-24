@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getAuth } from '@/lib/auth';
 import { TopNav } from '@/components/TopNav';
+import { AdminSidebar } from '@/components/AdminSidebar';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,27 +19,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   return (
     <div className="min-h-screen bg-vault-950">
       <TopNav email={auth.email} isAdmin backHref="/learn" />
-      <div className="mx-auto flex max-w-6xl gap-8 px-6 py-10">
-        <nav className="glass-panel h-fit w-44 shrink-0 space-y-1 rounded-2xl p-2">
-          <AdminNavLink href="/admin" label="Overview" />
-          <AdminNavLink href="/admin/users" label="Users" />
-          <AdminNavLink href="/admin/boards" label="Boards" />
-          <AdminNavLink href="/admin/videos" label="Classes" />
-          <AdminNavLink href="/admin/ebooks" label="E-Books" />
-        </nav>
+      <div className="mx-auto flex max-w-6xl gap-8 px-6 py-8">
+        <AdminSidebar />
         <div className="min-w-0 flex-1">{children}</div>
       </div>
     </div>
-  );
-}
-
-function AdminNavLink({ href, label }: { href: string; label: string }) {
-  return (
-    <a
-      href={href}
-      className="block rounded-lg px-3 py-2 font-mono text-xs uppercase tracking-widest text-ink-dim transition hover:bg-white/70 hover:text-ink"
-    >
-      {label}
-    </a>
   );
 }

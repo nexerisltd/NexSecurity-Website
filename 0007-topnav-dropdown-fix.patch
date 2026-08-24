@@ -1,0 +1,67 @@
+From 741b94f62021a8f4388acec0ca93ad918a457580 Mon Sep 17 00:00:00 2001
+From: "MR. ARX" <dev@nexeris.dev>
+Date: Mon, 24 Aug 2026 19:23:11 +0000
+Subject: [PATCH] TopNav: fix intermittent profile-dropdown-won't-open bug
+
+Rewrote the outside-click handling to be more robust:
+- The document listener is now only attached while the menu is
+  actually open (was previously attached once for the component's
+  whole lifetime), removed on close/unmount.
+- Registration is deferred one tick past the opening click, so the
+  same mousedown that opens the menu can't immediately be read as an
+  'outside' click on it and close it right back.
+- Containment check now prefers event.composedPath() over a plain
+  .contains(), which holds up better across portaled/re-rendered
+  content.
+- Escape key now also closes it.
+---
+ components/TopNav.tsx | 32 +++++++++++++++++++++++++++-----
+ 1 file changed, 27 insertions(+), 5 deletions(-)
+
+diff --git a/components/TopNav.tsx b/components/TopNav.tsx
+index 9121b14..4d939dc 100644
+--- a/components/TopNav.tsx
++++ b/components/TopNav.tsx
+@@ -125,12 +125,34 @@ export function TopNav({
+   }, [pathname]);
+ 
+   useEffect(() => {
+-    function onClickOutside(e: MouseEvent) {
+-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
++    if (!menuOpen) return;
++    function onPointerDown(e: MouseEvent | TouchEvent) {
++      const target = e.target as Node;
++      // composedPath handles clicks that originate inside portaled/shadow
++      // content more reliably than a plain .contains() check.
++      const path = 'composedPath' in e ? (e as MouseEvent).composedPath() : [];
++      const inside = path.length ? path.includes(menuRef.current as EventTarget) : !!menuRef.current?.contains(target);
++      if (!inside) setMenuOpen(false);
+     }
+-    document.addEventListener('mousedown', onClickOutside);
+-    return () => document.removeEventListener('mousedown', onClickOutside);
+-  }, []);
++    function onEscape(e: KeyboardEvent) {
++      if (e.key === 'Escape') setMenuOpen(false);
++    }
++    // Listener is only attached while the menu is open, and only after this
++    // tick — otherwise the same click that just opened the menu (mousedown
++    // fires before the button's own click handler resolves) can be seen as
++    // an "outside" click on some browsers and immediately close it again.
++    const id = window.setTimeout(() => {
++      document.addEventListener('mousedown', onPointerDown);
++      document.addEventListener('touchstart', onPointerDown);
++      document.addEventListener('keydown', onEscape);
++    }, 0);
++    return () => {
++      window.clearTimeout(id);
++      document.removeEventListener('mousedown', onPointerDown);
++      document.removeEventListener('touchstart', onPointerDown);
++      document.removeEventListener('keydown', onEscape);
++    };
++  }, [menuOpen]);
+ 
+   async function handleLogout() {
+     setLoggingOut(true);
+-- 
+2.43.0
+
