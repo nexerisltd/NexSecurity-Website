@@ -60,6 +60,7 @@ export function TopNav({
   email,
   isAdmin,
   backHref,
+  profile,
 }: {
   email: string;
   isAdmin: boolean;
@@ -67,6 +68,13 @@ export function TopNav({
    * board or video page linking back to its parent). The nav items
    * themselves are always shown — this never replaces them. */
   backHref?: string;
+  /** Google profile photo/name (from lib/auth.ts's getAuth(), which
+   * already has the Supabase Auth user object in hand server-side) —
+   * passed down instead of re-fetched client-side, so the real avatar
+   * renders on the very first paint instead of popping in after an
+   * extra round trip. Optional/nullable for any caller that hasn't been
+   * updated to pass it yet; falls back to the email-derived name below. */
+  profile?: { avatarUrl: string | null; fullName: string | null } | null;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -74,28 +82,7 @@ export function TopNav({
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  // Google profile picture/name from the Supabase auth session itself
-  // (user_metadata.avatar_url / full_name) — not stored in our own
-  // authorized_users table, so this is fetched client-side once on mount.
-  // Falls back to the email-derived name/initials below if unavailable.
-  const [googleProfile, setGoogleProfile] = useState<{ avatarUrl: string | null; fullName: string | null } | null>(
-    null
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    const supabase = createSupabaseBrowserClient();
-    supabase.auth.getUser().then(({ data }) => {
-      if (cancelled) return;
-      const meta = data.user?.user_metadata as { avatar_url?: string; picture?: string; full_name?: string } | undefined;
-      if (meta) {
-        setGoogleProfile({ avatarUrl: meta.avatar_url ?? meta.picture ?? null, fullName: meta.full_name ?? null });
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const googleProfile = profile ?? null;
 
   const items: NavItem[] = [
     { href: '/', label: 'Home', icon: ICONS.home, match: (p) => p === '/' },

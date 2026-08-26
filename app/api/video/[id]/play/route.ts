@@ -4,19 +4,9 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { uuidSchema } from '@/lib/validation';
 import { checkRateLimit } from '@/lib/rateLimit';
 import { logAuditEvent } from '@/lib/audit';
+import { buildBunnyEmbedUrl } from '@/lib/bunny';
 
 export const dynamic = 'force-dynamic';
-
-/**
- * Builds the plain Bunny embed URL from the stored "{libraryId}/{videoGuid}"
- * reference. No signed token, no expiry, no referrer restriction — by
- * request, this app only relies on the login/authorization check below
- * (must be authenticated, on the allowlist, and the owning board must be
- * published) before this URL is ever handed to the client.
- */
-function buildBunnyEmbedUrl(libraryId: string, videoId: string): string {
-  return `https://iframe.mediadelivery.net/embed/${libraryId}/${videoId}?autoplay=false`;
-}
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuthorized();

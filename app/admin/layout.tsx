@@ -18,7 +18,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   return (
     <div className="min-h-screen bg-vault-950">
-      <TopNav email={auth.email} isAdmin backHref="/learn" />
+      <TopNav email={auth.email} isAdmin backHref="/learn" profile={auth.profile} />
       <div className="mx-auto flex max-w-6xl gap-8 px-6 py-8">
         <AdminSidebar />
         <div className="min-w-0 flex-1">{children}</div>

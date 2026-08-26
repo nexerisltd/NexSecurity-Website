@@ -13,11 +13,13 @@ export type AuthorizedUser = {
 
 export type DeviceStatus = 'pending' | 'authorized' | 'restricted' | 'blocked';
 
+export type GoogleProfile = { avatarUrl: string | null; fullName: string | null };
+
 export type AuthResult =
   | { state: 'UNAUTHENTICATED' }
   | { state: 'UNAUTHORIZED'; email: string }
   | { state: 'DEVICE_BLOCKED'; email: string; ip: string; deviceLabel: string; deviceStatus: DeviceStatus | 'unknown' }
-  | { state: 'AUTHORIZED'; email: string; user: AuthorizedUser };
+  | { state: 'AUTHORIZED'; email: string; user: AuthorizedUser; profile: GoogleProfile };
 
 /** How many recent {ip, at} entries to keep per device. Bounded so a
  * device that roams a lot doesn't grow this row forever — an admin
@@ -144,6 +146,19 @@ export async function getAuth(): Promise<AuthResult> {
     return { state: 'UNAUTHORIZED', email: user.email };
   }
 
+  // Google's profile photo/name come from the OAuth identity itself
+  // (Supabase stores them in user_metadata) — not from our own
+  // authorized_users table, which has no such columns. Pulled here, once,
+  // server-side, since we already have `user` in hand from the
+  // getUser() call above — this is what lets TopNav render the real
+  // avatar on the very first paint instead of a client-side follow-up
+  // fetch to get the same data a second time.
+  const meta = user.user_metadata as { avatar_url?: string; picture?: string; full_name?: string } | undefined;
+  const profile: GoogleProfile = {
+    avatarUrl: meta?.avatar_url ?? meta?.picture ?? null,
+    fullName: meta?.full_name ?? null,
+  };
+
   const typedUser = authorizedUser as AuthorizedUser;
   const ip = getClientIp();
   const deviceLabel = getDeviceLabel();
@@ -158,7 +173,7 @@ export async function getAuth(): Promise<AuthResult> {
     if (typedUser.restrict_devices) {
       return { state: 'DEVICE_BLOCKED', email: user.email, ip, deviceLabel, deviceStatus: 'unknown' };
     }
-    return { state: 'AUTHORIZED', email: user.email, user: typedUser };
+    return { state: 'AUTHORIZED', email: user.email, user: typedUser, profile };
   }
 
   if (typedUser.restrict_devices) {
@@ -179,6 +194,7 @@ export async function getAuth(): Promise<AuthResult> {
     state: 'AUTHORIZED',
     email: user.email,
     user: typedUser,
+    profile,
   };
 }
 

@@ -164,7 +164,7 @@ export default async function HomePage() {
 
   return (
     <div className="min-h-screen bg-vault-950">
-      {isMember ? <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} /> : <PublicNav isMember={false} />}
+      {isMember && auth.state === 'AUTHORIZED' ? <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} profile={auth.profile} /> : <PublicNav isMember={false} />}
 
       {/* Hero */}
       <section className="relative overflow-hidden bg-grid bg-[size:32px_32px]">

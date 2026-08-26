@@ -44,7 +44,7 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
   if (board.board_type === 'routine') {
     return (
       <div className="min-h-screen bg-vault-950">
-        <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref="/learn" />
+        <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref="/learn" profile={auth.profile} />
         <main className="mx-auto max-w-4xl px-6 py-10">
           <h1 className="font-display text-2xl font-semibold text-ink">{board.title}</h1>
           {board.description && (
@@ -144,7 +144,7 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
     // Published leaf board with nothing attached yet.
     return (
       <div className="min-h-screen bg-vault-950">
-        <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref="/learn" />
+        <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref="/learn" profile={auth.profile} />
         <main className="mx-auto max-w-6xl px-6 py-16 text-center">
           <p className="text-sm text-ink-dim">This board doesn&apos;t have any content yet.</p>
         </main>
@@ -154,7 +154,7 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
 
   return (
     <div className="min-h-screen bg-vault-950">
-      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref="/learn" />
+      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref="/learn" profile={auth.profile} />
       <main className="mx-auto max-w-6xl px-6 py-10">
         <h1 className="font-display text-2xl font-semibold text-ink">{board.title}</h1>
         {board.description && (
@@ -213,7 +213,7 @@ function BoardListView({
   backHref,
   items,
 }: {
-  auth: { email: string; user: { role: string } };
+  auth: { email: string; user: { role: string }; profile: { avatarUrl: string | null; fullName: string | null } };
   heading: string;
   description?: string | null;
   backHref: string;
@@ -221,7 +221,7 @@ function BoardListView({
 }) {
   return (
     <div className="min-h-screen bg-vault-950">
-      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref={backHref} />
+      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref={backHref} profile={auth.profile} />
       <main className="mx-auto max-w-6xl px-6 py-10">
         <h1 className="font-display text-2xl font-semibold text-ink">{heading}</h1>
         {description && <p className="mt-2 max-w-2xl text-sm text-ink-dim">{description}</p>}

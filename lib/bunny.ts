@@ -102,3 +102,19 @@ function signIfNeeded(path: string, ttlSeconds: number): string {
 export function buildHlsMasterUrl(bunnyVideoId: string, ttlSeconds = 300): string {
   return signIfNeeded(`/${bunnyVideoId}/playlist.m3u8`, ttlSeconds);
 }
+
+/**
+ * Builds the plain Bunny embed URL from the stored "{libraryId}/{videoGuid}"
+ * reference. No signed token, no expiry, no referrer restriction — by
+ * request, this app only relies on the login/authorization check
+ * (requireAuthorized() + the video's board being published) happening
+ * fresh, server-side, right before this is called — never on the URL
+ * itself being unguessable. Shared between /api/video/[id]/play (the
+ * heartbeat's periodic re-checks) and the video page's initial server
+ * render (see app/learn/video/[id]/page.tsx) so the very first paint
+ * doesn't have to wait on a client-side round trip to get the exact same
+ * URL a fraction of a second later.
+ */
+export function buildBunnyEmbedUrl(libraryId: string, videoId: string): string {
+  return `https://iframe.mediadelivery.net/embed/${libraryId}/${videoId}?autoplay=false`;
+}

@@ -3,6 +3,8 @@ import { redirect, notFound } from 'next/navigation';
 import { getAuth } from '@/lib/auth';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { uuidSchema } from '@/lib/validation';
+import { buildBunnyEmbedUrl } from '@/lib/bunny';
+import { logAuditEvent } from '@/lib/audit';
 import { TopNav } from '@/components/TopNav';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import { VideoDownloadButton } from '@/components/VideoDownloadButton';
@@ -20,15 +22,21 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
   if (!parsedId.success) notFound();
   const videoId = parsedId.data;
 
-  // Metadata-only lookup (title/description/thumbnail) via the admin
-  // client, since RLS blocks non-admin reads of `videos` entirely. This
-  // NEVER selects source_ref — that only ever happens inside the /play
-  // route, right before minting a short-lived signed URL.
+  // Same fields /api/video/[id]/play reads (provider + source_ref included)
+  // — the page now builds the SAME embed URL that route would return, so
+  // the player's iframe can start loading on the very first paint instead
+  // of waiting on a client-side round trip after hydration for a URL
+  // that's already knowable server-side. This does NOT change what data
+  // reaches the client: that route already hands this exact URL to the
+  // browser on every heartbeat re-check (see components/VideoPlayer.tsx);
+  // this just stops making the browser wait for a follow-up fetch to get
+  // it the first time. The heartbeat keeps re-verifying access every 4
+  // minutes exactly as before — this only shortcuts the very first load.
   const adminClient = createSupabaseAdminClient();
   const { data: video } = await adminClient
     .from('videos')
     .select(
-      'id, title, description, download_url, board:board_id(id, title, published, parent_id), video_resources(id, title, url, sort_order)'
+      'id, title, description, download_url, provider, source_ref, board:board_id(id, title, published, parent_id), video_resources(id, title, url, sort_order)'
     )
     .eq('id', videoId)
     .maybeSingle();
@@ -42,38 +50,48 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
 
   if (!video || !board || !board.published) notFound();
 
+  let initialPlaybackUrl: string | null = null;
+  if (video.provider === 'bunny') {
+    const [libraryId, bunnyVideoId] = video.source_ref.split('/');
+    if (libraryId && bunnyVideoId) {
+      initialPlaybackUrl = buildBunnyEmbedUrl(libraryId, bunnyVideoId);
+      // Fire-and-forget, same event the /play route logs on every
+      // successful check — keeps the audit trail consistent between the
+      // initial server-rendered load and every later heartbeat call.
+      void logAuditEvent('VIDEO_ACCESS_GRANTED', auth.email, videoId);
+    }
+  }
+  // If neither branch set a URL (bad provider/malformed source_ref),
+  // initialPlaybackUrl stays null and VideoPlayer falls back to its own
+  // client-side fetch to /play, which surfaces the real error message —
+  // no error-handling logic duplicated here.
+
   const resources = (video.video_resources ?? []).sort(
     (a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order
   );
 
-  // Parent board (for the breadcrumb) and sibling boards under that same
-  // parent (for "You may also like") — only fetched when this board is
-  // nested one level deep, matching the 2-level grouping used elsewhere
-  // (see app/page.tsx's topLevelTitle for the same reasoning).
-  const { data: parentBoard } = board.parent_id
-    ? await adminClient.from('boards').select('id, title').eq('id', board.parent_id).maybeSingle()
-    : { data: null };
-
-  const siblingScopeParentId = board.parent_id ?? board.id;
-  const { data: siblingBoardsRaw } = await adminClient
-    .from('boards')
-    .select('id, title')
-    .eq('parent_id', siblingScopeParentId)
-    .eq('published', true)
-    .neq('id', board.id)
-    .limit(6);
+  // Parent board (breadcrumb) and sibling parts (Course Content) don't
+  // depend on each other — run them together instead of one after another.
+  // "You may also like" needs siblingBoards' ids first, so it stays a
+  // second wave rather than a third sequential round trip on its own.
+  const [{ data: parentBoard }, { data: siblingBoardsRaw }, { data: siblingVideos }] = await Promise.all([
+    board.parent_id
+      ? adminClient.from('boards').select('id, title').eq('id', board.parent_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+    adminClient
+      .from('boards')
+      .select('id, title')
+      .eq('parent_id', board.parent_id ?? board.id)
+      .eq('published', true)
+      .neq('id', board.id)
+      .limit(6),
+    adminClient
+      .from('videos')
+      .select('id, title, thumbnail_url, sort_order')
+      .eq('board_id', board.id)
+      .order('sort_order', { ascending: true }),
+  ]);
   const siblingBoards = siblingBoardsRaw ?? [];
-
-  // Sibling parts within the same board/chapter (Part 1, Part 2, ...).
-  // Safe to fetch via the admin client the same way as the video itself
-  // — authorization for this board was already established above, and
-  // these siblings belong to the exact same board.
-  const { data: siblingVideos } = await adminClient
-    .from('videos')
-    .select('id, title, thumbnail_url, sort_order')
-    .eq('board_id', board.id)
-    .order('sort_order', { ascending: true });
-
   const parts = siblingVideos ?? [];
 
   let recommended: { id: string; title: string; thumbnail_url: string | null; boardTitle: string }[] = [];
@@ -98,7 +116,7 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
 
   return (
     <div className="min-h-screen bg-vault-950">
-      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref={`/learn/board/${board.id}`} />
+      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref={`/learn/board/${board.id}`} profile={auth.profile} />
 
       <main className="mx-auto max-w-6xl px-6 py-8">
         <nav className="flex flex-wrap items-center gap-1.5 text-sm text-ink-faint">
@@ -119,7 +137,7 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
 
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_340px]">
           <div className="min-w-0">
-            <VideoPlayer videoId={video.id} />
+            <VideoPlayer videoId={video.id} initialUrl={initialPlaybackUrl} />
 
             <div className="mt-6 flex flex-wrap items-start justify-between gap-3">
               <h1 className="font-display text-xl font-semibold text-ink">{video.title}</h1>

@@ -28,10 +28,10 @@ const SEEK_SECONDS = 10;
 const HOLD_THRESHOLD_MS = 320;
 const HEARTBEAT_MS = 4 * 60 * 1000; // well inside the ~10-minute token expiry
 
-export function VideoPlayer({ videoId }: { videoId: string }) {
-  const [url, setUrl] = useState<string | null>(null);
+export function VideoPlayer({ videoId, initialUrl }: { videoId: string; initialUrl?: string | null }) {
+  const [url, setUrl] = useState<string | null>(initialUrl ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialUrl);
   const [revoked, setRevoked] = useState(false);
   const [playerJsReady, setPlayerJsReady] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
@@ -56,8 +56,13 @@ export function VideoPlayer({ videoId }: { videoId: string }) {
     }
   }, [videoId]);
 
-  // Initial load.
+  // Initial load — skipped when the server already rendered the URL
+  // (initialUrl prop, from app/learn/video/[id]/page.tsx): that's the same
+  // authorization check, already done server-side, so re-fetching it
+  // again immediately on mount would just be a redundant round trip. The
+  // heartbeat below still re-verifies on its normal schedule either way.
   useEffect(() => {
+    if (initialUrl) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -77,6 +82,7 @@ export function VideoPlayer({ videoId }: { videoId: string }) {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId]);
 
   // Heartbeat: re-checks authorization in the background while the tab

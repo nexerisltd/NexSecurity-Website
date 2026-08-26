@@ -47,7 +47,7 @@ export default async function EBooksPage() {
 
   return (
     <div className="min-h-screen bg-vault-950">
-      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} />
+      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} profile={auth.profile} />
       <main className="mx-auto max-w-6xl px-6 py-10">
         <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
           Digital Library
