@@ -107,6 +107,13 @@ function describeEvent(row: AuditRow): { label: string; detail: string; icon: JS
       if (action === 'EBOOK_CREATED') return { label: 'E-Book uploaded', detail: title, icon: EVENT_ICONS.ebook, color: 'bg-warn/10 text-warn' };
       if (action === 'VIDEO_DELETED') return { label: 'Class removed', detail: title, icon: EVENT_ICONS.class, color: 'bg-danger/10 text-danger' };
       if (action === 'EBOOK_DELETED') return { label: 'E-Book removed', detail: title, icon: EVENT_ICONS.ebook, color: 'bg-danger/10 text-danger' };
+      if (action === 'AUTO_RESTRICT_ENABLED')
+        return {
+          label: 'Device restriction auto-enabled',
+          detail: `${row.target ?? 'unknown user'} — first device registered`,
+          icon: EVENT_ICONS.role,
+          color: 'bg-warn/10 text-warn',
+        };
       return null;
     default:
       return null;
