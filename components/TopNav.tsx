@@ -303,14 +303,14 @@ export function TopNav({
         <div className="ml-auto flex items-center gap-3">
           <button
             onClick={() => setSearchOpen(true)}
-            className="hidden items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint transition hover:border-signal/50 lg:flex"
+            className="hidden shrink-0 items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint transition hover:border-signal/50 lg:flex"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
               <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8" />
               <path d="m20 20-3.5-3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
             </svg>
-            <span className="text-xs">Search classes, boards…</span>
-            <kbd className="ml-4 rounded border border-vault-border bg-vault-600 px-1.5 py-0.5 text-[10px] font-medium">
+            <span className="whitespace-nowrap text-xs">Search classes, boards…</span>
+            <kbd className="ml-4 shrink-0 rounded border border-vault-border bg-vault-600 px-1.5 py-0.5 text-[10px] font-medium">
               Ctrl K
             </kbd>
           </button>
