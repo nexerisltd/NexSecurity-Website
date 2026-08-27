@@ -203,7 +203,15 @@ export function TopNav({
   async function handleLogout() {
     setLoggingOut(true);
     const supabase = createSupabaseBrowserClient();
-    await supabase.auth.signOut();
+    // scope: 'local' — clears only THIS browser's session. The default
+    // (no options / scope: 'global') calls Supabase's server-side revoke,
+    // which invalidates the account's refresh token everywhere at once —
+    // that's what was logging out every other device the moment any one
+    // of them signed out. Each device's session is meant to be
+    // independent; only an admin blocking/removing the account (or the
+    // "Log out all" enforce-devices action) should ever affect other
+    // devices, not a normal sign-out button.
+    await supabase.auth.signOut({ scope: 'local' });
     router.push('/login');
     router.refresh();
   }
