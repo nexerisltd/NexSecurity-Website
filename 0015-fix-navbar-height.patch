@@ -1,0 +1,49 @@
+From 8bad6a27bd8f331cf26b79e799b46bdde597cd9c Mon Sep 17 00:00:00 2001
+From: "MR. ARX" <dev@nexeris.dev>
+Date: Thu, 27 Aug 2026 18:33:28 +0000
+Subject: [PATCH] Fix: nav bar height changing between pages (search box text
+ wrapping)
+
+The "Search classes, boards..." button in TopNav was the only element
+in that header row without shrink-0 + whitespace-nowrap protection
+(every nav item, the logo, the bell, the avatar all have it). On pages
+that also render the back-arrow (backHref set -- board pages, admin,
+etc), that arrow eats ~36px of the row's width, which was just enough
+to push this one unprotected button into wrapping its text onto two
+lines. A taller child in a flex row makes the whole row taller, which
+is why the entire nav bar visibly grew on those pages while staying
+compact on /learn (no back arrow there).
+
+Added shrink-0 to the button and its icon/kbd, whitespace-nowrap to
+the label span -- matches the same pattern already used everywhere
+else in this header. Nav bar height is now constant across every page.
+---
+ components/TopNav.tsx | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/components/TopNav.tsx b/components/TopNav.tsx
+index 04faf3c..14c72fa 100644
+--- a/components/TopNav.tsx
++++ b/components/TopNav.tsx
+@@ -303,14 +303,14 @@ export function TopNav({
+         <div className="ml-auto flex items-center gap-3">
+           <button
+             onClick={() => setSearchOpen(true)}
+-            className="hidden items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint transition hover:border-signal/50 lg:flex"
++            className="hidden shrink-0 items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint transition hover:border-signal/50 lg:flex"
+           >
+-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
++            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
+               <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8" />
+               <path d="m20 20-3.5-3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+             </svg>
+-            <span className="text-xs">Search classes, boards…</span>
+-            <kbd className="ml-4 rounded border border-vault-border bg-vault-600 px-1.5 py-0.5 text-[10px] font-medium">
++            <span className="whitespace-nowrap text-xs">Search classes, boards…</span>
++            <kbd className="ml-4 shrink-0 rounded border border-vault-border bg-vault-600 px-1.5 py-0.5 text-[10px] font-medium">
+               Ctrl K
+             </kbd>
+           </button>
+-- 
+2.43.0
+
