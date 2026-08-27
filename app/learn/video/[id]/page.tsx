@@ -6,7 +6,6 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { uuidSchema } from '@/lib/validation';
 import { buildBunnyEmbedUrl } from '@/lib/bunny';
 import { logAuditEvent } from '@/lib/audit';
-import { TopNav } from '@/components/TopNav';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import { VideoDownloadButton } from '@/components/VideoDownloadButton';
 import { PartsList } from '@/components/PartsList';
@@ -116,18 +115,15 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
   }
 
   return (
-    <div className="min-h-screen bg-vault-950">
-      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref={`/learn/board/${board.id}`} profile={auth.profile} />
-
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <nav className="flex flex-wrap items-center gap-1.5 text-sm text-ink-faint">
-          <Link href="/learn" className="text-signal hover:underline">
-            Learn
-          </Link>
-          {parentBoard && (
-            <>
-              <span>›</span>
-              <Link href={`/learn/board/${parentBoard.id}`} className="text-signal hover:underline">
+    <main className="mx-auto max-w-6xl px-6 py-8">
+      <nav className="flex flex-wrap items-center gap-1.5 text-sm text-ink-faint">
+        <Link href="/learn" className="text-signal hover:underline">
+          Learn
+        </Link>
+        {parentBoard && (
+          <>
+            <span>›</span>
+            <Link href={`/learn/board/${parentBoard.id}`} className="text-signal hover:underline">
                 {parentBoard.title}
               </Link>
             </>
@@ -234,6 +230,5 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
           </div>
         </div>
       </main>
-    </div>
   );
 }

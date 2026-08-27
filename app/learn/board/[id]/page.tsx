@@ -4,7 +4,6 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { uuidSchema } from '@/lib/validation';
 import Image from 'next/image';
-import { TopNav } from '@/components/TopNav';
 import { BoardsSearchGrid } from '@/components/BoardsSearchGrid';
 import { VideosSearchGrid } from '@/components/VideosSearchGrid';
 import { BoardEbooksGrid } from '@/components/BoardEbooksGrid';
@@ -44,32 +43,29 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
   // itself, e.g. a class timetable graphic).
   if (board.board_type === 'routine') {
     return (
-      <div className="min-h-screen bg-vault-950">
-        <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref="/learn" profile={auth.profile} />
-        <main className="mx-auto max-w-4xl px-6 py-10">
-          <h1 className="font-display text-2xl font-semibold text-ink">{board.title}</h1>
-          {board.description && (
-            <p className="mt-2 max-w-2xl text-sm text-ink-dim">{board.description}</p>
+      <main className="mx-auto max-w-4xl px-6 py-10">
+        <h1 className="font-display text-2xl font-semibold text-ink">{board.title}</h1>
+        {board.description && (
+          <p className="mt-2 max-w-2xl text-sm text-ink-dim">{board.description}</p>
+        )}
+        <div className="relative mt-6 aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass">
+          {board.routine_image_url ? (
+            <Image
+              src={board.routine_image_url}
+              alt={board.title}
+              fill
+              sizes="(min-width: 1024px) 896px, 100vw"
+              className="object-contain"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
+                Routine not uploaded yet
+              </span>
+            </div>
           )}
-          <div className="relative mt-6 aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass">
-            {board.routine_image_url ? (
-              <Image
-                src={board.routine_image_url}
-                alt={board.title}
-                fill
-                sizes="(min-width: 1024px) 896px, 100vw"
-                className="object-contain"
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center">
-                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
-                  Routine not uploaded yet
-                </span>
-              </div>
-            )}
-          </div>
-        </main>
-      </div>
+        </div>
+      </main>
     );
   }
 
@@ -92,13 +88,7 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
       .filter((b) => b && b.published);
 
     return (
-      <BoardListView
-        auth={auth}
-        heading={page?.title ?? board.title}
-        description={page?.description}
-        backHref="/learn"
-        items={children}
-      />
+      <BoardListView heading={page?.title ?? board.title} description={page?.description} items={children} />
     );
   }
 
@@ -111,15 +101,7 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
     .order('sort_order', { ascending: true });
 
   if (childBoards && childBoards.length > 0) {
-    return (
-      <BoardListView
-        auth={auth}
-        heading={board.title}
-        description={board.description}
-        backHref="/learn"
-        items={childBoards}
-      />
-    );
+    return <BoardListView heading={board.title} description={board.description} items={childBoards} />;
   }
 
   // Case 3: leaf board — show every class attached to it (as a grid, like
@@ -149,74 +131,57 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
   if (!hasVideos && !hasEbooks) {
     // Published leaf board with nothing attached yet.
     return (
-      <div className="min-h-screen bg-vault-950">
-        <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref="/learn" profile={auth.profile} />
-        <main className="mx-auto max-w-6xl px-6 py-16 text-center">
-          <p className="text-sm text-ink-dim">This board doesn&apos;t have any content yet.</p>
-        </main>
-      </div>
+      <main className="mx-auto max-w-6xl px-6 py-16 text-center">
+        <p className="text-sm text-ink-dim">This board doesn&apos;t have any content yet.</p>
+      </main>
     );
   }
 
   return (
-    <div className="min-h-screen bg-vault-950">
-      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref="/learn" profile={auth.profile} />
-      <main className="mx-auto max-w-6xl px-6 py-10">
-        <h1 className="font-display text-2xl font-semibold text-ink">{board.title}</h1>
-        {board.description && (
-          <p className="mt-2 max-w-2xl text-sm text-ink-dim">{board.description}</p>
-        )}
+    <main className="mx-auto max-w-6xl px-6 py-10">
+      <h1 className="font-display text-2xl font-semibold text-ink">{board.title}</h1>
+      {board.description && <p className="mt-2 max-w-2xl text-sm text-ink-dim">{board.description}</p>}
 
-        {hasVideos && (
-          <>
-            <p className="mt-8 font-mono text-[11px] uppercase tracking-widest text-ink-faint">
-              {videos!.length} {videos!.length === 1 ? 'class' : 'classes'} available
-            </p>
-            <VideosSearchGrid videos={videos!} />
-          </>
-        )}
+      {hasVideos && (
+        <>
+          <p className="mt-8 font-mono text-[11px] uppercase tracking-widest text-ink-faint">
+            {videos!.length} {videos!.length === 1 ? 'class' : 'classes'} available
+          </p>
+          <VideosSearchGrid videos={videos!} />
+        </>
+      )}
 
-        {hasEbooks && (
-          <>
-            <p className="mt-10 font-mono text-[11px] uppercase tracking-widest text-ink-faint">
-              E-Books
-            </p>
-            <BoardEbooksGrid ebooks={ebooks!} />
-          </>
-        )}
-      </main>
-    </div>
+      {hasEbooks && (
+        <>
+          <p className="mt-10 font-mono text-[11px] uppercase tracking-widest text-ink-faint">E-Books</p>
+          <BoardEbooksGrid ebooks={ebooks!} />
+        </>
+      )}
+    </main>
   );
 }
 
 function BoardListView({
-  auth,
   heading,
   description,
-  backHref,
   items,
 }: {
-  auth: { email: string; user: { role: string }; profile: { avatarUrl: string | null; fullName: string | null } };
   heading: string;
   description?: string | null;
-  backHref: string;
   items: { id: string; title: string; description?: string | null; thumbnail_url?: string | null }[];
 }) {
   return (
-    <div className="min-h-screen bg-vault-950">
-      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} backHref={backHref} profile={auth.profile} />
-      <main className="mx-auto max-w-6xl px-6 py-10">
-        <h1 className="font-display text-2xl font-semibold text-ink">{heading}</h1>
-        {description && <p className="mt-2 max-w-2xl text-sm text-ink-dim">{description}</p>}
+    <main className="mx-auto max-w-6xl px-6 py-10">
+      <h1 className="font-display text-2xl font-semibold text-ink">{heading}</h1>
+      {description && <p className="mt-2 max-w-2xl text-sm text-ink-dim">{description}</p>}
 
-        {items.length === 0 ? (
-          <div className="mt-10 rounded-xl border border-dashed border-vault-border p-10 text-center">
-            <p className="text-sm text-ink-dim">Nothing published here yet.</p>
-          </div>
-        ) : (
-          <BoardsSearchGrid boards={items} placeholder="Search…" emptyMessage="Nothing published here yet." />
-        )}
-      </main>
-    </div>
+      {items.length === 0 ? (
+        <div className="mt-10 rounded-xl border border-dashed border-vault-border p-10 text-center">
+          <p className="text-sm text-ink-dim">Nothing published here yet.</p>
+        </div>
+      ) : (
+        <BoardsSearchGrid boards={items} placeholder="Search…" emptyMessage="Nothing published here yet." />
+      )}
+    </main>
   );
 }

@@ -12,6 +12,21 @@ body {
   color: #101828;
 }
 
+/* Always reserve the vertical scrollbar's gutter, whether or not the
+   current page's content is actually tall enough to need it. Without
+   this, navigating from a short page (no scrollbar) to a tall one (has
+   a scrollbar) shrinks the viewport by the scrollbar's width and every
+   full-width element — the top nav included — visibly reflows/"resizes"
+   on every navigation. Reserving the gutter unconditionally keeps the
+   viewport width identical across every page.
+   overflow-y: scroll is the universal fallback (works in every browser,
+   ever); scrollbar-gutter: stable is the modern equivalent for browsers
+   that support it. Both target the same fix, so keeping both is safe. */
+html {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
 body {
   font-feature-settings: 'ss01' on, 'ss02' on;
   position: relative;

@@ -61,15 +61,10 @@ const ICONS = {
 export function TopNav({
   email,
   isAdmin,
-  backHref,
   profile,
 }: {
   email: string;
   isAdmin: boolean;
-  /** Optional small back-chevron shown to the left of the logo (e.g. a
-   * board or video page linking back to its parent). The nav items
-   * themselves are always shown — this never replaces them. */
-  backHref?: string;
   /** Google profile photo/name (from lib/auth.ts's getAuth(), which
    * already has the Supabase Auth user object in hand server-side) —
    * passed down instead of re-fetched client-side, so the real avatar
@@ -203,15 +198,7 @@ export function TopNav({
   async function handleLogout() {
     setLoggingOut(true);
     const supabase = createSupabaseBrowserClient();
-    // scope: 'local' — clears only THIS browser's session. The default
-    // (no options / scope: 'global') calls Supabase's server-side revoke,
-    // which invalidates the account's refresh token everywhere at once —
-    // that's what was logging out every other device the moment any one
-    // of them signed out. Each device's session is meant to be
-    // independent; only an admin blocking/removing the account (or the
-    // "Log out all" enforce-devices action) should ever affect other
-    // devices, not a normal sign-out button.
-    await supabase.auth.signOut({ scope: 'local' });
+    await supabase.auth.signOut();
     router.push('/login');
     router.refresh();
   }
@@ -237,15 +224,6 @@ export function TopNav({
       <div className="glass-panel-solid mx-auto max-w-6xl rounded-2xl">
         <div className="flex items-center gap-6 px-6 py-3">
         <div className="flex shrink-0 items-center gap-2">
-          {backHref && (
-            <Link
-              href={backHref}
-              title="Back"
-              className="flex h-7 w-7 items-center justify-center rounded-full text-ink-dim transition hover:bg-vault-600 hover:text-ink"
-            >
-              ←
-            </Link>
-          )}
           <Link href="/" className="flex items-center gap-2.5">
             <span className="relative h-8 w-8 overflow-hidden rounded-lg border border-white/70 bg-white/70 shadow-glass">
               <Image src="/logo.png" alt="NexSecurity" fill className="object-cover" />
@@ -303,14 +281,14 @@ export function TopNav({
         <div className="ml-auto flex items-center gap-3">
           <button
             onClick={() => setSearchOpen(true)}
-            className="hidden shrink-0 items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint transition hover:border-signal/50 lg:flex"
+            className="hidden min-w-0 items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint transition hover:border-signal/50 lg:flex"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
               <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8" />
               <path d="m20 20-3.5-3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
             </svg>
-            <span className="whitespace-nowrap text-xs">Search classes, boards…</span>
-            <kbd className="ml-4 shrink-0 rounded border border-vault-border bg-vault-600 px-1.5 py-0.5 text-[10px] font-medium">
+            <span className="min-w-0 flex-1 truncate text-left text-xs">Search classes, boards…</span>
+            <kbd className="ml-4 shrink-0 whitespace-nowrap rounded border border-vault-border bg-vault-600 px-1.5 py-0.5 text-[10px] font-medium">
               Ctrl K
             </kbd>
           </button>

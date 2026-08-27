@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getAuth } from '@/lib/auth';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
-import { TopNav } from '@/components/TopNav';
 import { EbooksSearch } from '@/components/EbooksSearch';
 
 export const dynamic = 'force-dynamic';
@@ -46,25 +45,22 @@ export default async function EBooksPage() {
   }
 
   return (
-    <div className="min-h-screen bg-vault-950">
-      <TopNav email={auth.email} isAdmin={auth.user.role === 'ADMIN'} profile={auth.profile} />
-      <main className="mx-auto max-w-6xl px-6 py-10">
-        <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
-          Digital Library
-        </p>
-        <h1 className="mt-2 font-display text-2xl font-semibold text-ink">E-Books</h1>
-        <p className="mt-2 max-w-xl text-sm text-ink-dim">
-          Study guides and notes from every board you have access to, in one place.
-        </p>
+    <main className="mx-auto max-w-6xl px-6 py-10">
+      <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
+        Digital Library
+      </p>
+      <h1 className="mt-2 font-display text-2xl font-semibold text-ink">E-Books</h1>
+      <p className="mt-2 max-w-xl text-sm text-ink-dim">
+        Study guides and notes from every board you have access to, in one place.
+      </p>
 
-        {grouped.size === 0 ? (
-          <div className="mt-10 rounded-xl border border-dashed border-vault-border p-10 text-center">
-            <p className="text-sm text-ink-dim">No e-books have been published yet.</p>
-          </div>
-        ) : (
-          <EbooksSearch groups={Array.from(grouped.values())} />
-        )}
-      </main>
-    </div>
+      {grouped.size === 0 ? (
+        <div className="mt-10 rounded-xl border border-dashed border-vault-border p-10 text-center">
+          <p className="text-sm text-ink-dim">No e-books have been published yet.</p>
+        </div>
+      ) : (
+        <EbooksSearch groups={Array.from(grouped.values())} />
+      )}
+    </main>
   );
 }
