@@ -2,8 +2,7 @@ import { redirect } from 'next/navigation';
 import { getAuth } from '@/lib/auth';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { TopNav } from '@/components/TopNav';
-import { BoardCard } from '@/components/BoardCard';
-import { SearchableGrid } from '@/components/SearchableGrid';
+import { BoardsSearchGrid } from '@/components/BoardsSearchGrid';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,21 +44,10 @@ export default async function LearnPage() {
             </p>
           </div>
         ) : (
-          <SearchableGrid
-            items={boards}
-            getKey={(b) => b.id}
-            getSearchText={(b) => `${b.title} ${b.description ?? ''}`}
+          <BoardsSearchGrid
+            boards={boards}
             placeholder="Search your classes…"
             emptyMessage="Nothing has been published here yet. Check back soon."
-            gridClassName="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
-            renderItem={(board) => (
-              <BoardCard
-                href={`/learn/board/${board.id}`}
-                title={board.title}
-                description={board.description}
-                thumbnailUrl={board.thumbnail_url}
-              />
-            )}
           />
         )}
       </main>

@@ -5,10 +5,9 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { uuidSchema } from '@/lib/validation';
 import Image from 'next/image';
 import { TopNav } from '@/components/TopNav';
-import { BoardCard } from '@/components/BoardCard';
-import { VideoCard } from '@/components/VideoCard';
-import { EBookCard } from '@/components/EBookCard';
-import { SearchableGrid } from '@/components/SearchableGrid';
+import { BoardsSearchGrid } from '@/components/BoardsSearchGrid';
+import { VideosSearchGrid } from '@/components/VideosSearchGrid';
+import { BoardEbooksGrid } from '@/components/BoardEbooksGrid';
 
 export const dynamic = 'force-dynamic';
 
@@ -173,27 +172,7 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
             <p className="mt-8 font-mono text-[11px] uppercase tracking-widest text-ink-faint">
               {videos!.length} {videos!.length === 1 ? 'class' : 'classes'} available
             </p>
-            <SearchableGrid
-              items={videos!}
-              getKey={(v) => v.id}
-              getSearchText={(v) => `${v.title} ${v.description ?? ''}`}
-              placeholder="Search classes…"
-              emptyMessage="No classes yet."
-              gridClassName="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
-              renderItem={(v) => {
-                const i = videos!.findIndex((x) => x.id === v.id);
-                return (
-                  <VideoCard
-                    href={`/learn/video/${v.id}`}
-                    partLabel={`#${i + 1}`}
-                    title={v.title}
-                    description={v.description}
-                    thumbnailUrl={v.thumbnail_url}
-                    resourceLabels={(v.video_resources ?? []).map((r: { title: string }) => r.title)}
-                  />
-                );
-              }}
-            />
+            <VideosSearchGrid videos={videos!} />
           </>
         )}
 
@@ -202,23 +181,7 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
             <p className="mt-10 font-mono text-[11px] uppercase tracking-widest text-ink-faint">
               E-Books
             </p>
-            <SearchableGrid
-              items={ebooks!}
-              getKey={(eb) => eb.id}
-              getSearchText={(eb) => eb.title}
-              placeholder="Search e-books…"
-              emptyMessage="No e-books yet."
-              gridClassName="mt-4 grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4"
-              renderItem={(eb) => (
-                <EBookCard
-                  title={eb.title}
-                  thumbnailUrl={eb.thumbnail_url}
-                  downloadUrl={eb.download_url}
-                  format={eb.format}
-                  price={Number(eb.price)}
-                />
-              )}
-            />
+            <BoardEbooksGrid ebooks={ebooks!} />
           </>
         )}
       </main>
@@ -251,22 +214,7 @@ function BoardListView({
             <p className="text-sm text-ink-dim">Nothing published here yet.</p>
           </div>
         ) : (
-          <SearchableGrid
-            items={items}
-            getKey={(item) => item.id}
-            getSearchText={(item) => `${item.title} ${item.description ?? ''}`}
-            placeholder="Search…"
-            emptyMessage="Nothing published here yet."
-            gridClassName="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
-            renderItem={(item) => (
-              <BoardCard
-                href={`/learn/board/${item.id}`}
-                title={item.title}
-                description={item.description}
-                thumbnailUrl={item.thumbnail_url}
-              />
-            )}
-          />
+          <BoardsSearchGrid boards={items} placeholder="Search…" emptyMessage="Nothing published here yet." />
         )}
       </main>
     </div>
