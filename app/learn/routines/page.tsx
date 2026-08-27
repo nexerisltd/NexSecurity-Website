@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getAuth } from '@/lib/auth';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import Image from 'next/image';
 import { TopNav } from '@/components/TopNav';
 
 export const dynamic = 'force-dynamic';
@@ -46,13 +47,14 @@ export default async function RoutinesPage() {
                   <h2 className="font-display text-base font-semibold text-ink">{r.title}</h2>
                   {r.description && <p className="mt-1 text-sm text-ink-dim">{r.description}</p>}
                 </div>
-                <div className="aspect-video w-full bg-vault-800">
+                <div className="relative aspect-video w-full bg-vault-800">
                   {r.routine_image_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
+                    <Image
                       src={r.routine_image_url}
                       alt={r.title}
-                      className="h-full w-full object-contain"
+                      fill
+                      sizes="(min-width: 1024px) 896px, 100vw"
+                      className="object-contain"
                     />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center">

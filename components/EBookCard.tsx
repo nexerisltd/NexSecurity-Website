@@ -1,3 +1,5 @@
+import Image from 'next/image';
+
 export function EBookCard({
   title,
   thumbnailUrl,
@@ -15,8 +17,13 @@ export function EBookCard({
     <div className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 transition hover:border-signal/60 hover:shadow-glow backdrop-blur-xl shadow-glass">
       <div className="relative aspect-[3/4] w-full overflow-hidden bg-vault-800">
         {thumbnailUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={thumbnailUrl} alt="" className="h-full w-full object-cover" />
+          <Image
+            src={thumbnailUrl}
+            alt=""
+            fill
+            sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
+            className="object-cover"
+          />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-scanlines">
             <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 
 type Part = {
   id: string;
@@ -24,8 +25,7 @@ export function PartsList({ parts, activeId }: { parts: Part[]; activeId: string
           >
             <div className="relative h-12 w-20 shrink-0 overflow-hidden rounded-md bg-vault-800">
               {part.thumbnail_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={part.thumbnail_url} alt="" className="h-full w-full object-cover" />
+                <Image src={part.thumbnail_url} alt="" fill sizes="80px" className="object-cover" />
               ) : (
                 <div className="flex h-full w-full items-center justify-center">
                   <span className="font-mono text-[9px] text-ink-faint">#{index + 1}</span>

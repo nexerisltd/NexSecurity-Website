@@ -1,0 +1,60 @@
+From c3981f83837ac67c37ebd7a9f622481ddae9d805 Mon Sep 17 00:00:00 2001
+From: "MR. ARX" <dev@nexeris.dev>
+Date: Thu, 27 Aug 2026 18:12:35 +0000
+Subject: [PATCH] Fix: signing out on one device was logging out every device
+
+Root cause: components/TopNav.tsx's sign-out button called
+supabase.auth.signOut() with no options. Supabase's default scope for
+that call is 'global' -- it calls the server-side revoke endpoint and
+invalidates the account's refresh token entirely, which kills every
+active session for that account on every device/browser at once, not
+just the one clicking "Sign out".
+
+Fixed by passing { scope: 'local' }, which only clears this browser's
+own session/storage without touching the server-side token -- so
+signing out on phone no longer touches the desktop session, and vice
+versa. Each device's session is now genuinely independent, the way a
+normal sign-out button should behave.
+
+Left the two signOut() calls in app/auth/callback/route.ts untouched
+(still default/global scope) -- those aren't a user-initiated logout,
+they're the security path that destroys a session the moment it's
+discovered to belong to a disabled/unauthorized account right after
+OAuth completes. That session was never legitimate, so revoking it
+everywhere is the correct, intentional behavior there, not a bug.
+
+Also verified (no code change needed): the auto-enable-restriction-
+after-first-device logic from the previous patch is live and correct
+as deployed. If it looked like it wasn't firing, that's very likely
+because the tested account already had a device on record from before
+that patch shipped -- it only triggers on an account's genuinely
+first-ever device sighting, by design, not retroactively for existing
+accounts/devices.
+---
+ components/TopNav.tsx | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/components/TopNav.tsx b/components/TopNav.tsx
+index 8d8955c..eba409c 100644
+--- a/components/TopNav.tsx
++++ b/components/TopNav.tsx
+@@ -144,7 +144,15 @@ export function TopNav({
+   async function handleLogout() {
+     setLoggingOut(true);
+     const supabase = createSupabaseBrowserClient();
+-    await supabase.auth.signOut();
++    // scope: 'local' — clears only THIS browser's session. The default
++    // (no options / scope: 'global') calls Supabase's server-side revoke,
++    // which invalidates the account's refresh token everywhere at once —
++    // that's what was logging out every other device the moment any one
++    // of them signed out. Each device's session is meant to be
++    // independent; only an admin blocking/removing the account (or the
++    // "Log out all" enforce-devices action) should ever affect other
++    // devices, not a normal sign-out button.
++    await supabase.auth.signOut({ scope: 'local' });
+     router.push('/login');
+     router.refresh();
+   }
+-- 
+2.43.0
+

@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ThumbnailUpload } from '@/components/ThumbnailUpload';
+import { SearchInput } from '@/components/SearchInput';
+import { orderBoardsHierarchically } from '@/lib/boardTree';
 
-type Board = { id: string; title: string };
+type Board = { id: string; title: string; parent_id: string | null; sort_order: number };
 
 type EBook = {
   id: string;
@@ -35,6 +37,17 @@ export default function AdminEBooksPage() {
   const [format, setFormat] = useState('PDF');
   const [price, setPrice] = useState('0');
   const [description, setDescription] = useState('');
+  const [search, setSearch] = useState('');
+
+  const orderedBoards = useMemo(() => orderBoardsHierarchically(boards), [boards]);
+
+  const filteredEbooks = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return ebooks;
+    return ebooks.filter(
+      (eb) => eb.title.toLowerCase().includes(needle) || (eb.board?.title ?? '').toLowerCase().includes(needle)
+    );
+  }, [ebooks, search]);
 
   async function load() {
     setLoading(true);
@@ -110,8 +123,10 @@ export default function AdminEBooksPage() {
         <Field label="Board">
           <select required value={boardId} onChange={(e) => setBoardId(e.target.value)} className="input">
             <option value="">— Select a board —</option>
-            {boards.map((b) => (
+            {orderedBoards.map((b) => (
               <option key={b.id} value={b.id}>
+                {'—'.repeat(b.depth)}
+                {b.depth > 0 ? ' ' : ''}
                 {b.title}
               </option>
             ))}
@@ -179,6 +194,15 @@ export default function AdminEBooksPage() {
 
       {error && <p className="mt-3 text-xs text-danger">{error}</p>}
 
+      {ebooks.length > 5 && (
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search e-books or boards…"
+          className="mt-4 max-w-sm"
+        />
+      )}
+
       <div className="mt-6 space-y-3">
         {loading ? (
           <p className="text-center text-sm text-ink-faint">Loading…</p>
@@ -186,8 +210,12 @@ export default function AdminEBooksPage() {
           <p className="rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
             No e-books yet.
           </p>
+        ) : filteredEbooks.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
+            No e-books match &ldquo;{search}&rdquo;.
+          </p>
         ) : (
-          ebooks.map((eb) => (
+          filteredEbooks.map((eb) => (
             <div
               key={eb.id}
               className="flex items-center justify-between rounded-xl border border-vault-border bg-vault-900 px-4 py-3 backdrop-blur-xl shadow-glass"

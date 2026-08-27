@@ -5,8 +5,10 @@ import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { SearchInput } from '@/components/SearchInput';
 
 type NavItem = { href: string; label: string; icon: JSX.Element; match: (path: string) => boolean };
+type SearchResult = { id: string; title: string; board_type: 'normal' | 'routine'; published: boolean };
 
 const ICONS = {
   home: (
@@ -81,6 +83,10 @@ export function TopNav({
   const [loggingOut, setLoggingOut] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const googleProfile = profile ?? null;
 
@@ -109,7 +115,60 @@ export function TopNav({
   // Close the mobile nav sheet automatically whenever navigation happens.
   useEffect(() => {
     setMobileNavOpen(false);
+    setSearchOpen(false);
   }, [pathname]);
+
+  // Ctrl/Cmd+K opens the search palette from anywhere; Escape closes it.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSearchOpen(true);
+      } else if (e.key === 'Escape') {
+        setSearchOpen(false);
+      }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  // Autofocus the input the moment the palette opens.
+  useEffect(() => {
+    if (!searchOpen) {
+      setSearchQuery('');
+      setSearchResults([]);
+    }
+  }, [searchOpen]);
+
+  // Debounced search — a class/board list that's grown large is exactly
+  // what this box is for, so results update as you type rather than
+  // requiring a submit.
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    const id = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/learn/search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        setSearchResults(res.ok ? data.boards ?? [] : []);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+    return () => window.clearTimeout(id);
+  }, [searchQuery]);
+
+  function goToResult(id: string) {
+    setSearchOpen(false);
+    router.push(`/learn/board/${id}`);
+  }
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -208,6 +267,17 @@ export function TopNav({
         </nav>
 
         <button
+          onClick={() => setSearchOpen(true)}
+          aria-label="Search classes and boards"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-ink-dim transition hover:bg-vault-600 hover:text-ink lg:hidden"
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8" />
+            <path d="m20 20-3.5-3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        </button>
+
+        <button
           onClick={() => setMobileNavOpen((v) => !v)}
           aria-label="Toggle navigation menu"
           aria-expanded={mobileNavOpen}
@@ -223,16 +293,19 @@ export function TopNav({
         </button>
 
         <div className="ml-auto flex items-center gap-3">
-          <div className="hidden items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint lg:flex">
+          <button
+            onClick={() => setSearchOpen(true)}
+            className="hidden items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint transition hover:border-signal/50 lg:flex"
+          >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8" />
               <path d="m20 20-3.5-3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
             </svg>
-            <span className="text-xs">Search anything…</span>
+            <span className="text-xs">Search classes, boards…</span>
             <kbd className="ml-4 rounded border border-vault-border bg-vault-600 px-1.5 py-0.5 text-[10px] font-medium">
               Ctrl K
             </kbd>
-          </div>
+          </button>
 
           <button
             title="Notifications"
@@ -330,6 +403,63 @@ export function TopNav({
           </nav>
         )}
       </div>
+
+      {searchOpen && (
+        <div
+          className="fixed inset-0 z-40 flex justify-center bg-black/40 px-4 pt-24 backdrop-blur-sm"
+          onClick={() => setSearchOpen(false)}
+        >
+          <div
+            className="glass-panel-solid h-fit w-full max-w-lg rounded-2xl p-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <SearchInput
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search classes and boards…"
+              autoFocus
+            />
+            <div className="mt-2 max-h-80 overflow-y-auto">
+              {searchQuery.trim().length < 2 ? (
+                <p className="px-2 py-6 text-center text-xs text-ink-faint">
+                  Keep typing to search across every board and class.
+                </p>
+              ) : searchLoading ? (
+                <p className="px-2 py-6 text-center text-xs text-ink-faint">Searching…</p>
+              ) : searchResults.length === 0 ? (
+                <p className="px-2 py-6 text-center text-xs text-ink-faint">
+                  No boards or classes match &ldquo;{searchQuery}&rdquo;.
+                </p>
+              ) : (
+                <ul className="mt-1 space-y-0.5">
+                  {searchResults.map((b) => (
+                    <li key={b.id}>
+                      <button
+                        onClick={() => goToResult(b.id)}
+                        className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-ink transition hover:bg-vault-600"
+                      >
+                        <span className="truncate">{b.title}</span>
+                        <span className="flex shrink-0 gap-1.5">
+                          {b.board_type === 'routine' && (
+                            <span className="rounded-full border border-vault-border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-ink-faint">
+                              Routine
+                            </span>
+                          )}
+                          {!b.published && (
+                            <span className="rounded-full border border-warn/30 bg-warn/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-warn">
+                              Draft
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

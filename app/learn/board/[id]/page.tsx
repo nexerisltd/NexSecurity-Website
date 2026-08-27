@@ -3,10 +3,12 @@ import { getAuth } from '@/lib/auth';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { uuidSchema } from '@/lib/validation';
+import Image from 'next/image';
 import { TopNav } from '@/components/TopNav';
 import { BoardCard } from '@/components/BoardCard';
 import { VideoCard } from '@/components/VideoCard';
 import { EBookCard } from '@/components/EBookCard';
+import { SearchableGrid } from '@/components/SearchableGrid';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,10 +52,15 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
           {board.description && (
             <p className="mt-2 max-w-2xl text-sm text-ink-dim">{board.description}</p>
           )}
-          <div className="mt-6 aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass">
+          <div className="relative mt-6 aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass">
             {board.routine_image_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={board.routine_image_url} alt={board.title} className="h-full w-full object-contain" />
+              <Image
+                src={board.routine_image_url}
+                alt={board.title}
+                fill
+                sizes="(min-width: 1024px) 896px, 100vw"
+                className="object-contain"
+              />
             ) : (
               <div className="flex h-full w-full items-center justify-center">
                 <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
@@ -166,19 +173,27 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
             <p className="mt-8 font-mono text-[11px] uppercase tracking-widest text-ink-faint">
               {videos!.length} {videos!.length === 1 ? 'class' : 'classes'} available
             </p>
-            <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {videos!.map((v, i) => (
-                <VideoCard
-                  key={v.id}
-                  href={`/learn/video/${v.id}`}
-                  partLabel={`#${i + 1}`}
-                  title={v.title}
-                  description={v.description}
-                  thumbnailUrl={v.thumbnail_url}
-                  resourceLabels={(v.video_resources ?? []).map((r: { title: string }) => r.title)}
-                />
-              ))}
-            </div>
+            <SearchableGrid
+              items={videos!}
+              getKey={(v) => v.id}
+              getSearchText={(v) => `${v.title} ${v.description ?? ''}`}
+              placeholder="Search classes…"
+              emptyMessage="No classes yet."
+              gridClassName="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
+              renderItem={(v) => {
+                const i = videos!.findIndex((x) => x.id === v.id);
+                return (
+                  <VideoCard
+                    href={`/learn/video/${v.id}`}
+                    partLabel={`#${i + 1}`}
+                    title={v.title}
+                    description={v.description}
+                    thumbnailUrl={v.thumbnail_url}
+                    resourceLabels={(v.video_resources ?? []).map((r: { title: string }) => r.title)}
+                  />
+                );
+              }}
+            />
           </>
         )}
 
@@ -187,18 +202,23 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
             <p className="mt-10 font-mono text-[11px] uppercase tracking-widest text-ink-faint">
               E-Books
             </p>
-            <div className="mt-4 grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
-              {ebooks!.map((eb) => (
+            <SearchableGrid
+              items={ebooks!}
+              getKey={(eb) => eb.id}
+              getSearchText={(eb) => eb.title}
+              placeholder="Search e-books…"
+              emptyMessage="No e-books yet."
+              gridClassName="mt-4 grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4"
+              renderItem={(eb) => (
                 <EBookCard
-                  key={eb.id}
                   title={eb.title}
                   thumbnailUrl={eb.thumbnail_url}
                   downloadUrl={eb.download_url}
                   format={eb.format}
                   price={Number(eb.price)}
                 />
-              ))}
-            </div>
+              )}
+            />
           </>
         )}
       </main>
@@ -231,17 +251,22 @@ function BoardListView({
             <p className="text-sm text-ink-dim">Nothing published here yet.</p>
           </div>
         ) : (
-          <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {items.map((item) => (
+          <SearchableGrid
+            items={items}
+            getKey={(item) => item.id}
+            getSearchText={(item) => `${item.title} ${item.description ?? ''}`}
+            placeholder="Search…"
+            emptyMessage="Nothing published here yet."
+            gridClassName="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
+            renderItem={(item) => (
               <BoardCard
-                key={item.id}
                 href={`/learn/board/${item.id}`}
                 title={item.title}
                 description={item.description}
                 thumbnailUrl={item.thumbnail_url}
               />
-            ))}
-          </div>
+            )}
+          />
         )}
       </main>
     </div>

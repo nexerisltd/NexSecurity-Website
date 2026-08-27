@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { redirect, notFound } from 'next/navigation';
 import { getAuth } from '@/lib/auth';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
@@ -212,8 +213,7 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
                     <Link key={r.id} href={`/learn/video/${r.id}`} className="flex items-center gap-3 group">
                       <div className="relative h-12 w-20 shrink-0 overflow-hidden rounded-md bg-vault-800">
                         {r.thumbnail_url ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={r.thumbnail_url} alt="" className="h-full w-full object-cover" />
+                          <Image src={r.thumbnail_url} alt="" fill sizes="80px" className="object-cover" />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-ink-faint" aria-hidden="true">

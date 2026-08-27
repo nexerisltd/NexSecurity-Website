@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { SearchInput } from '@/components/SearchInput';
 
 type AuthorizedUser = {
   id: string;
@@ -21,6 +22,13 @@ export default function AdminUsersPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [enforcing, setEnforcing] = useState(false);
   const [enforceResult, setEnforceResult] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+
+  const filteredUsers = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return users;
+    return users.filter((u) => u.email.toLowerCase().includes(needle));
+  }, [users, search]);
 
   async function load() {
     setLoading(true);
@@ -161,6 +169,15 @@ export default function AdminUsersPage() {
 
       {error && <p className="mt-3 text-xs text-danger">{error}</p>}
 
+      {users.length > 5 && (
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search by email…"
+          className="mt-4 max-w-sm"
+        />
+      )}
+
       <div className="mt-6 overflow-hidden rounded-xl border border-vault-border">
         <table className="w-full text-left text-sm">
           <thead className="bg-vault-900 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
@@ -184,8 +201,14 @@ export default function AdminUsersPage() {
                   No authorized users yet.
                 </td>
               </tr>
+            ) : filteredUsers.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-4 py-6 text-center text-ink-faint">
+                  No users match &ldquo;{search}&rdquo;.
+                </td>
+              </tr>
             ) : (
-              users.map((u) => (
+              filteredUsers.map((u) => (
                 <tr key={u.id} className="border-t border-vault-border bg-vault-900/50">
                   <td className="px-4 py-3 text-ink">{u.email}</td>
                   <td className="px-4 py-3">

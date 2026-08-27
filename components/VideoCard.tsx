@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 
 export function VideoCard({
   href,
@@ -19,11 +20,12 @@ export function VideoCard({
     <div className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 transition hover:border-signal/60 hover:shadow-glow backdrop-blur-xl shadow-glass">
       <Link href={href} className="group relative block aspect-video w-full overflow-hidden bg-vault-800">
         {thumbnailUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <Image
             src={thumbnailUrl}
             alt=""
-            className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+            fill
+            sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
+            className="object-cover transition duration-300 group-hover:scale-105"
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-scanlines">

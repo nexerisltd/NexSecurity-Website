@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { getAuth } from '@/lib/auth';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { TopNav } from '@/components/TopNav';
-import { EBookCard } from '@/components/EBookCard';
+import { EbooksSearch } from '@/components/EbooksSearch';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,25 +62,7 @@ export default async function EBooksPage() {
             <p className="text-sm text-ink-dim">No e-books have been published yet.</p>
           </div>
         ) : (
-          Array.from(grouped.values()).map((group) => (
-            <section key={group.boardTitle} className="mt-10">
-              <p className="font-mono text-[11px] uppercase tracking-widest text-ink-faint">
-                {group.boardTitle}
-              </p>
-              <div className="mt-4 grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
-                {group.items.map((eb) => (
-                  <EBookCard
-                    key={eb.id}
-                    title={eb.title}
-                    thumbnailUrl={eb.thumbnail_url}
-                    downloadUrl={eb.download_url}
-                    format={eb.format}
-                    price={Number(eb.price)}
-                  />
-                ))}
-              </div>
-            </section>
-          ))
+          <EbooksSearch groups={Array.from(grouped.values())} />
         )}
       </main>
     </div>
