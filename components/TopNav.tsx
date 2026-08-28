@@ -198,7 +198,7 @@ export function TopNav({
   async function handleLogout() {
     setLoggingOut(true);
     const supabase = createSupabaseBrowserClient();
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
     router.push('/login');
     router.refresh();
   }
@@ -222,13 +222,13 @@ export function TopNav({
   return (
     <header className="sticky top-3 z-30 px-4">
       <div className="glass-panel-solid mx-auto max-w-6xl rounded-2xl">
-        <div className="flex items-center gap-6 px-6 py-3">
+        <div className="flex items-center gap-3 px-4 py-3 sm:px-6 md:gap-6">
         <div className="flex shrink-0 items-center gap-2">
           <Link href="/" className="flex items-center gap-2.5">
             <span className="relative h-8 w-8 overflow-hidden rounded-lg border border-white/70 bg-white/70 shadow-glass">
               <Image src="/logo.png" alt="NexSecurity" fill className="object-cover" />
             </span>
-            <span className="font-display text-sm font-semibold tracking-tight text-ink">NexSecurity</span>
+            <span className="hidden font-display text-sm font-semibold tracking-tight text-ink sm:inline">NexSecurity</span>
           </Link>
         </div>
 
@@ -278,7 +278,7 @@ export function TopNav({
           </svg>
         </button>
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-1.5 sm:gap-3">
           <button
             onClick={() => setSearchOpen(true)}
             className="hidden min-w-0 items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint transition hover:border-signal/50 lg:flex"
@@ -335,7 +335,14 @@ export function TopNav({
                 <span className="block text-xs font-semibold text-ink">{displayName}</span>
                 <span className="block text-[11px] text-ink-faint">{isAdmin ? 'Admin' : 'Member'}</span>
               </span>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-ink-faint">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+                className="hidden text-ink-faint sm:block"
+              >
                 <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>

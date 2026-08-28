@@ -149,6 +149,31 @@ export function VideoPlayer({ videoId, initialUrl }: { videoId: string; initialU
     }
   }
 
+  // The Screen Orientation API's lock() only succeeds in a fullscreen
+  // context in most browsers, so this runs off the fullscreenchange
+  // event rather than inside toggleFullscreen() itself — requestFullscreen()
+  // is async and the element isn't actually fullscreen yet the instant
+  // toggleFullscreen() returns. Best-effort throughout: iOS Safari has no
+  // Screen Orientation API at all, and unlock() during teardown can throw
+  // if the document is already leaving fullscreen — neither should ever
+  // surface as a visible error to someone just trying to watch a class.
+  useEffect(() => {
+    function onFullscreenChange() {
+      const orientation = screen.orientation as (ScreenOrientation & { lock?: (o: string) => Promise<void> }) | undefined;
+      if (document.fullscreenElement) {
+        orientation?.lock?.('landscape')?.catch(() => {});
+      } else {
+        try {
+          orientation?.unlock?.();
+        } catch {
+          // ignore — see comment above
+        }
+      }
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
   function togglePlayPause() {
     const player = playerRef.current;
     if (!player) return;

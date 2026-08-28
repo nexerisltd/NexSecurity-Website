@@ -34,7 +34,13 @@ export async function GET(request: NextRequest) {
   const email = user?.email?.toLowerCase();
 
   if (!email) {
-    await supabase.auth.signOut();
+    // scope: 'local' — this only clears THIS just-created (and about to be
+    // discarded) session. The default 'global' scope would instead revoke
+    // every refresh token on the account, including any other device's
+    // already-authorized, perfectly valid session — an edge case here
+    // (Google somehow returned no email) has no business logging someone
+    // out of their desktop.
+    await supabase.auth.signOut({ scope: 'local' });
     return NextResponse.redirect(`${origin}/auth/auth-code-error`);
   }
 
@@ -49,7 +55,14 @@ export async function GET(request: NextRequest) {
   if (!isActive) {
     // Critical: destroy the session immediately. Authentication succeeding
     // must never leave behind an app-usable session for an unauthorized email.
-    await supabase.auth.signOut();
+    // scope: 'local' — same reasoning as the branch above: this device's
+    // own login attempt failed authorization, which says nothing about
+    // any other device already legitimately signed in on this account.
+    // (An admin actually disabling someone's account is still enforced on
+    // every request regardless of session validity — see getAuth() in
+    // lib/auth.ts, which checks authorized_users.status independently —
+    // so scope: 'local' here doesn't weaken that enforcement at all.)
+    await supabase.auth.signOut({ scope: 'local' });
     await logAuditEvent('LOGIN_DENIED', email);
     return NextResponse.redirect(`${origin}/login?error=access_denied`);
   }

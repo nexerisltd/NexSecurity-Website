@@ -68,6 +68,7 @@ export async function POST() {
     .update({ restrict_devices: true })
     .eq('status', 'ACTIVE')
     .eq('restrict_devices', false)
+    .neq('role', 'ADMIN')
     .select('id');
 
   if (error) return NextResponse.json({ error: 'Could not update users.' }, { status: 400 });

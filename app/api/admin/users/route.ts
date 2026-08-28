@@ -39,7 +39,12 @@ export async function POST(request: NextRequest) {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from('authorized_users')
-    .insert({ email: parsed.data.email, role: parsed.data.role, status: 'ACTIVE' })
+    .insert({
+      email: parsed.data.email,
+      role: parsed.data.role,
+      status: 'ACTIVE',
+      restrict_devices: parsed.data.role !== 'ADMIN',
+    })
     .select('id, email, role, status')
     .single();
 

@@ -2,7 +2,6 @@ import 'server-only';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getClientIp, getDeviceLabel, getDeviceId } from '@/lib/requestInfo';
-import { logAuditEvent } from '@/lib/audit';
 
 export type AuthorizedUser = {
   id: string;
@@ -46,8 +45,6 @@ const IP_HISTORY_LIMIT = 20;
  */
 async function upsertDeviceAndGetStatus(
   userId: string,
-  userEmail: string,
-  role: 'USER' | 'ADMIN',
   deviceId: string,
   ip: string,
   deviceLabel: string
@@ -85,21 +82,18 @@ async function upsertDeviceAndGetStatus(
       return existing.status as DeviceStatus;
     }
 
-    // Never seen before for this user. Was there ANY device on record for
-    // this account before now? If not, this is that account's very first
-    // device ever.
-    const { count: priorDeviceCount } = await adminClient
+    // Never seen before for this user. If this account has NO other
+    // device rows at all, this is their very first device ever — the
+    // moment their email was authorized and they signed in for the
+    // first time — and gets auto-approved so a brand-new user isn't
+    // blocked on their own first login. Every device after that first
+    // one still lands as 'pending', same as always.
+    const { count: existingDeviceCount } = await adminClient
       .from('user_devices')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', userId);
-    const isFirstDeviceEver = (priorDeviceCount ?? 0) === 0;
 
-    // Policy: a brand-new account's first device needs no admin approval
-    // at all — it's trusted immediately. Every device after that DOES
-    // need approval, which is what flipping restrict_devices on (below)
-    // achieves. Admin accounts are exempt from that auto-flip entirely —
-    // an admin who wants restriction on their own account has to turn it
-    // on by hand, same as before this feature existed.
+    const isFirstDeviceEver = !existingDeviceCount || existingDeviceCount === 0;
     const initialStatus: DeviceStatus = isFirstDeviceEver ? 'authorized' : 'pending';
 
     await adminClient.from('user_devices').insert({
@@ -109,18 +103,10 @@ async function upsertDeviceAndGetStatus(
       ip_history: [{ ip, at: nowIso }],
       device_label: deviceLabel,
       status: initialStatus,
+      label: isFirstDeviceEver ? 'First device (auto-approved)' : null,
       first_seen: nowIso,
       last_seen: nowIso,
     });
-
-    if (isFirstDeviceEver && role !== 'ADMIN') {
-      await adminClient.from('authorized_users').update({ restrict_devices: true }).eq('id', userId);
-      void logAuditEvent('ADMIN_ACTION', 'system', userEmail, {
-        action: 'AUTO_RESTRICT_ENABLED',
-        reason: 'first_device_registered',
-      });
-    }
-
     return initialStatus;
   } catch (err) {
     console.error('[auth] failed to upsert device', err);
@@ -191,35 +177,32 @@ export async function getAuth(): Promise<AuthResult> {
   const deviceLabel = getDeviceLabel();
   const deviceId = getDeviceId();
 
+  const isRestricted = typedUser.restrict_devices && typedUser.role !== 'ADMIN';
+
   if (!deviceId) {
     // The device-identity cookie hasn't round-tripped to the browser yet
     // (see lib/deviceId.ts) — extremely rare in practice, since it's
     // planted on every path including the OAuth redirect chain that gets
     // a user here in the first place. Only accounts under restriction
     // need to care; treat it as "not yet approved" rather than guessing.
-    if (typedUser.restrict_devices) {
+    if (isRestricted) {
       return { state: 'DEVICE_BLOCKED', email: user.email, ip, deviceLabel, deviceStatus: 'unknown' };
     }
     return { state: 'AUTHORIZED', email: user.email, user: typedUser, profile };
   }
 
-  if (typedUser.restrict_devices) {
+  if (isRestricted) {
     // Restriction is on for this account: the status decision gates
     // access, so it must be awaited before we can answer.
-    const status = await upsertDeviceAndGetStatus(typedUser.id, typedUser.email, typedUser.role, deviceId, ip, deviceLabel);
+    const status = await upsertDeviceAndGetStatus(typedUser.id, deviceId, ip, deviceLabel);
     if (status !== 'authorized') {
       return { state: 'DEVICE_BLOCKED', email: user.email, ip, deviceLabel, deviceStatus: status };
     }
   } else {
     // Not restricted — still record the sighting so an admin has real
     // device history to review the moment they turn restriction on, but
-    // don't make this request wait on it. This is also where a
-    // non-admin account's very first-ever device gets auto-authorized
-    // AND flips restrict_devices on for next time (see
-    // upsertDeviceAndGetStatus) — since restrict_devices is read as
-    // `false` above for this exact request, that flip can't retroactively
-    // block the request already in flight.
-    void upsertDeviceAndGetStatus(typedUser.id, typedUser.email, typedUser.role, deviceId, ip, deviceLabel);
+    // don't make this request wait on it.
+    void upsertDeviceAndGetStatus(typedUser.id, deviceId, ip, deviceLabel);
   }
 
   return {
