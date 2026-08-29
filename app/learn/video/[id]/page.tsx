@@ -5,6 +5,7 @@ import { getAuth } from '@/lib/auth';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { uuidSchema } from '@/lib/validation';
 import { buildBunnyEmbedUrl } from '@/lib/bunny';
+import { buildYoutubeEmbedUrl } from '@/lib/youtube';
 import { logAuditEvent } from '@/lib/audit';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import { VideoDownloadButton } from '@/components/VideoDownloadButton';
@@ -60,6 +61,9 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
       // initial server-rendered load and every later heartbeat call.
       void logAuditEvent('VIDEO_ACCESS_GRANTED', auth.email, videoId);
     }
+  } else if (video.provider === 'youtube') {
+    initialPlaybackUrl = buildYoutubeEmbedUrl(video.source_ref);
+    void logAuditEvent('VIDEO_ACCESS_GRANTED', auth.email, videoId);
   }
   // If neither branch set a URL (bad provider/malformed source_ref),
   // initialPlaybackUrl stays null and VideoPlayer falls back to its own
@@ -134,7 +138,7 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
 
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_340px]">
           <div className="min-w-0">
-            <VideoPlayer videoId={video.id} initialUrl={initialPlaybackUrl} />
+            <VideoPlayer videoId={video.id} initialUrl={initialPlaybackUrl} initialProvider={video.provider} />
 
             <div className="mt-6 flex flex-wrap items-start justify-between gap-3">
               <h1 className="font-display text-xl font-semibold text-ink">{video.title}</h1>

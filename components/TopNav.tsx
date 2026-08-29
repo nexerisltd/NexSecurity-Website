@@ -6,9 +6,19 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { SearchInput } from '@/components/SearchInput';
+import { relativeTime } from '@/lib/relativeTime';
 
 type NavItem = { href: string; label: string; icon: JSX.Element; match: (path: string) => boolean };
 type SearchResult = { id: string; title: string; board_type: 'normal' | 'routine'; published: boolean };
+type PendingRequest = {
+  id: string;
+  device_id: string;
+  ip_address: string;
+  device_label: string;
+  first_seen: string;
+  user_id: string | null;
+  user_email: string;
+};
 
 const ICONS = {
   home: (
@@ -84,6 +94,10 @@ export function TopNav({
   const [searchLoading, setSearchLoading] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const googleProfile = profile ?? null;
+
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
+  const notifRef = useRef<HTMLDivElement>(null);
 
   const items: NavItem[] = [
     { href: '/', label: 'Home', icon: ICONS.home, match: (p) => p === '/' },
@@ -195,6 +209,63 @@ export function TopNav({
     };
   }, [menuOpen]);
 
+  // Polls for pending device sign-in requests — admin-only, since only
+  // admins can even reach /api/admin/requests. Deliberately a short
+  // interval poll rather than a live Postgres-changes subscription: it's
+  // far simpler to reason about correctly (no separate Realtime/RLS
+  // wiring to get right on a security-sensitive table), and ~15s is
+  // already fast enough for a human to notice and act on.
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    async function poll() {
+      try {
+        const res = await fetch('/api/admin/requests');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setPendingRequests(data.requests ?? []);
+      } catch {
+        // Silent — a missed poll just means the badge is stale for one
+        // cycle, not worth surfacing as an error to the admin.
+      }
+    }
+    poll();
+    const interval = setInterval(poll, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!notifOpen) return;
+    function onPointerDown(e: MouseEvent | TouchEvent) {
+      const target = e.target as Node;
+      const path = 'composedPath' in e ? (e as MouseEvent).composedPath() : [];
+      const inside = path.length ? path.includes(notifRef.current as EventTarget) : !!notifRef.current?.contains(target);
+      if (!inside) setNotifOpen(false);
+    }
+    function onEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') setNotifOpen(false);
+    }
+    const id = window.setTimeout(() => {
+      document.addEventListener('mousedown', onPointerDown);
+      document.addEventListener('touchstart', onPointerDown);
+      document.addEventListener('keydown', onEscape);
+    }, 0);
+    return () => {
+      window.clearTimeout(id);
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('touchstart', onPointerDown);
+      document.removeEventListener('keydown', onEscape);
+    };
+  }, [notifOpen]);
+
+  function goToRequest(id: string) {
+    setNotifOpen(false);
+    router.push(`/admin/requests?highlight=${id}`);
+  }
+
   async function handleLogout() {
     setLoggingOut(true);
     const supabase = createSupabaseBrowserClient();
@@ -293,21 +364,65 @@ export function TopNav({
             </kbd>
           </button>
 
-          <button
-            title="Notifications"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-ink-faint transition hover:bg-vault-600 hover:text-ink"
-          >
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M6 9a6 6 0 1 1 12 0c0 4.2 1 5.5 1.5 6.2.3.4 0 .8-.5.8H5c-.5 0-.8-.4-.5-.8C5 14.5 6 13.2 6 9Z"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <path d="M10 19a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-          </button>
+          <div className="relative" ref={notifRef}>
+            <button
+              onClick={() => isAdmin && setNotifOpen((v) => !v)}
+              title={isAdmin ? 'Device sign-in requests' : 'Notifications'}
+              className="relative flex h-9 w-9 items-center justify-center rounded-full text-ink-faint transition hover:bg-vault-600 hover:text-ink"
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M6 9a6 6 0 1 1 12 0c0 4.2 1 5.5 1.5 6.2.3.4 0 .8-.5.8H5c-.5 0-.8-.4-.5-.8C5 14.5 6 13.2 6 9Z"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path d="M10 19a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+              {isAdmin && pendingRequests.length > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-danger px-1 text-[9px] font-semibold text-white">
+                  {pendingRequests.length > 9 ? '9+' : pendingRequests.length}
+                </span>
+              )}
+            </button>
+
+            {isAdmin && notifOpen && (
+              <div className="glass-panel-solid absolute right-0 z-20 mt-2 w-72 overflow-hidden rounded-xl py-1">
+                <p className="px-3.5 py-2 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+                  Device sign-in requests
+                </p>
+                {pendingRequests.length === 0 ? (
+                  <p className="px-3.5 py-4 text-center text-xs text-ink-faint">
+                    No pending requests right now.
+                  </p>
+                ) : (
+                  <ul className="max-h-72 overflow-y-auto">
+                    {pendingRequests.slice(0, 5).map((req) => (
+                      <li key={req.id}>
+                        <button
+                          onClick={() => goToRequest(req.id)}
+                          className="flex w-full flex-col items-start gap-0.5 px-3.5 py-2.5 text-left transition hover:bg-vault-600"
+                        >
+                          <span className="truncate text-sm text-ink">{req.user_email}</span>
+                          <span className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+                            {req.device_label} · {relativeTime(req.first_seen)}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <Link
+                  href="/admin/requests"
+                  onClick={() => setNotifOpen(false)}
+                  className="block border-t border-vault-border px-3.5 py-2.5 text-center text-xs font-medium text-signal transition hover:bg-vault-600"
+                >
+                  View all requests
+                </Link>
+              </div>
+            )}
+          </div>
 
           <div className="relative" ref={menuRef}>
             <button

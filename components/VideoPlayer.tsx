@@ -28,13 +28,23 @@ const SEEK_SECONDS = 10;
 const HOLD_THRESHOLD_MS = 320;
 const HEARTBEAT_MS = 4 * 60 * 1000; // well inside the ~10-minute token expiry
 
-export function VideoPlayer({ videoId, initialUrl }: { videoId: string; initialUrl?: string | null }) {
+export function VideoPlayer({
+  videoId,
+  initialUrl,
+  initialProvider,
+}: {
+  videoId: string;
+  initialUrl?: string | null;
+  initialProvider?: string | null;
+}) {
   const [url, setUrl] = useState<string | null>(initialUrl ?? null);
+  const [provider, setProvider] = useState<string | null>(initialProvider ?? null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!initialUrl);
   const [revoked, setRevoked] = useState(false);
   const [playerJsReady, setPlayerJsReady] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
+  const isBunny = provider === 'bunny';
 
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -50,6 +60,7 @@ export function VideoPlayer({ videoId, initialUrl }: { videoId: string; initialU
       const res = await fetch(`/api/video/${videoId}/play`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Playback unavailable.');
+      if (data.provider) setProvider(data.provider);
       return true;
     } catch {
       return false;
@@ -72,7 +83,10 @@ export function VideoPlayer({ videoId, initialUrl }: { videoId: string; initialU
         const res = await fetch(`/api/video/${videoId}/play`, { method: 'POST' });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? 'Playback unavailable.');
-        if (!cancelled) setUrl(data.url);
+        if (!cancelled) {
+          setUrl(data.url);
+          setProvider(data.provider ?? null);
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Playback unavailable.');
       } finally {
@@ -103,9 +117,12 @@ export function VideoPlayer({ videoId, initialUrl }: { videoId: string; initialU
     return () => clearInterval(interval);
   }, [url, fetchPlaybackUrl]);
 
-  // Wire up player.js once both the library and the iframe exist.
+  // Wire up player.js once both the library and the iframe exist. Bunny
+  // only — YouTube's iframe has no player.js support at all, it uses its
+  // own (different) IFrame Player API, so it just gets its own native
+  // controls below instead of these custom ones.
   useEffect(() => {
-    if (!playerJsReady || !url || !iframeRef.current || !window.playerjs) return;
+    if (!isBunny || !playerJsReady || !url || !iframeRef.current || !window.playerjs) return;
     const player = new window.playerjs.Player(iframeRef.current);
     playerRef.current = player;
     player.on('ready', () => {
@@ -247,11 +264,13 @@ export function VideoPlayer({ videoId, initialUrl }: { videoId: string; initialU
 
   return (
     <div ref={containerRef} className="group relative aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-800">
-      <Script
-        src="https://assets.mediadelivery.net/playerjs/playerjs-latest.min.js"
-        strategy="afterInteractive"
-        onLoad={() => setPlayerJsReady(true)}
-      />
+      {isBunny && (
+        <Script
+          src="https://assets.mediadelivery.net/playerjs/playerjs-latest.min.js"
+          strategy="afterInteractive"
+          onLoad={() => setPlayerJsReady(true)}
+        />
+      )}
 
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center">
@@ -280,18 +299,17 @@ export function VideoPlayer({ videoId, initialUrl }: { videoId: string; initialU
       )}
 
       {url && !loading && !error && !revoked && (
-        // Bunny Stream embed with a signed, ~10-minute token (see
-        // /api/video/[id]/play). Fetched fresh per session — never a
-        // permanent link, never present in page source or any board-list
-        // API response. Note: an iframe's src is always visible in
-        // DevTools by nature of how browsers work — the token's expiry +
-        // Bunny's "Allowed Referrers" restriction is what stops a copied
-        // link from being reusable elsewhere, not concealment.
+        // Bunny: a signed, ~10-minute embed token (see /api/video/[id]/play)
+        // — fetched fresh per session, expires, and is restricted to
+        // Bunny's configured "Allowed Referrers". YouTube: a permanent,
+        // never-expiring video id — see the comment in
+        // app/api/video/[id]/play/route.ts for why that's a real,
+        // accepted trade-off for free hosting rather than an oversight.
         <iframe
           ref={iframeRef}
           src={url}
           loading="lazy"
-          allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;"
+          allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture; clipboard-write; web-share"
           allowFullScreen
           className="h-full w-full border-0"
         />
@@ -303,7 +321,7 @@ export function VideoPlayer({ videoId, initialUrl }: { videoId: string; initialU
         </div>
       )}
 
-      {url && !loading && !error && !revoked && (
+      {isBunny && url && !loading && !error && !revoked && (
         <div className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-vault-950/70 px-2.5 py-1 font-mono text-[9px] uppercase tracking-widest text-white/70 opacity-0 backdrop-blur-sm transition group-hover:opacity-100">
           ←/→ 10s · Space play/pause (hold 2×) · F fullscreen
         </div>

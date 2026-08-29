@@ -90,8 +90,10 @@ create table if not exists public.videos (
   title text not null,
   description text,
   thumbnail_url text,
-  -- always 'bunny' — this app only integrates with Bunny Stream (see
-  -- app/api/video/[id]/play/route.ts)
+  -- 'bunny' (paid, protected — signed short-lived embed token) or
+  -- 'youtube' (free, unlisted — see app/api/video/[id]/play/route.ts for
+  -- what each provider means for source_ref's shape and for the level of
+  -- protection actually achievable).
   provider text not null default 'bunny',
   -- "{libraryId}/{videoGuid}" from the Bunny embed URL — never exposed
   -- to the client; only used server-side to build a signed embed token.

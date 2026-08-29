@@ -54,15 +54,33 @@ export function getClientIp(): string {
  * human admin in the panel ("Windows · Chrome" instead of a bare UUID).
  */
 export function getDeviceLabel(): string {
-  const ua = headers().get('user-agent') ?? '';
-  return parseDeviceLabel(ua);
+  const h = headers();
+  const ua = h.get('user-agent') ?? '';
+  const platformHint = h.get('sec-ch-ua-platform');
+  return parseDeviceLabel(ua, platformHint);
 }
 
-export function parseDeviceLabel(ua: string): string {
-  if (!ua) return 'Unknown device';
+export function parseDeviceLabel(ua: string, platformHint?: string | null): string {
+  if (!ua && !platformHint) return 'Unknown device';
+
+  // Sec-CH-UA-Platform (sent by default on every Chromium-based browser —
+  // Chrome, Edge, Opera, Samsung Internet — no server opt-in required) is
+  // checked FIRST and wins when present. It reports the browser's real
+  // underlying OS even when the traditional User-Agent string has been
+  // rewritten to impersonate a desktop OS, which is exactly what Chrome
+  // for Android does when someone taps "Desktop site" — the UA string
+  // becomes a generic "X11; Linux x86_64" with no mention of Android or
+  // Mobile at all, which is what was showing up as "Linux" in the admin
+  // panel for large numbers of perfectly ordinary Android users. The
+  // header's value is a quoted string, e.g. "Android", "Windows",
+  // "macOS", "Linux", "Chrome OS", or "Unknown" — strip the quotes and
+  // trust it whenever it's a real answer.
+  const hint = platformHint?.replace(/"/g, '').trim();
 
   let os = 'Unknown OS';
-  if (/windows/i.test(ua)) os = 'Windows';
+  if (hint && hint !== 'Unknown') {
+    os = hint === 'Chrome OS' || hint === 'Chromium OS' ? 'Chrome OS' : hint;
+  } else if (/windows/i.test(ua)) os = 'Windows';
   else if (/iphone|ipad|ipod/i.test(ua)) os = 'iOS';
   else if (/mac os x/i.test(ua)) os = 'macOS';
   else if (/android/i.test(ua)) os = 'Android';

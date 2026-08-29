@@ -5,6 +5,7 @@ import { uuidSchema } from '@/lib/validation';
 import { checkRateLimit } from '@/lib/rateLimit';
 import { logAuditEvent } from '@/lib/audit';
 import { buildBunnyEmbedUrl } from '@/lib/bunny';
+import { buildYoutubeEmbedUrl } from '@/lib/youtube';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,24 +46,30 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
   }
 
-  if (video.provider !== 'bunny') {
+  if (video.provider !== 'bunny' && video.provider !== 'youtube') {
     await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, {
       reason: 'unsupported_provider',
     });
     return NextResponse.json({ error: 'This video is not currently playable.' }, { status: 500 });
   }
 
-  const [libraryId, bunnyVideoId] = video.source_ref.split('/');
-  if (!libraryId || !bunnyVideoId) {
-    await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, {
-      reason: 'malformed_source_ref',
-    });
-    return NextResponse.json({ error: 'This video is not currently playable.' }, { status: 500 });
+  let url: string;
+  if (video.provider === 'youtube') {
+    // source_ref is just the bare YouTube video id here (see the
+    // parsing helper in app/admin/videos/page.tsx).
+    url = buildYoutubeEmbedUrl(video.source_ref);
+  } else {
+    const [libraryId, bunnyVideoId] = video.source_ref.split('/');
+    if (!libraryId || !bunnyVideoId) {
+      await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, {
+        reason: 'malformed_source_ref',
+      });
+      return NextResponse.json({ error: 'This video is not currently playable.' }, { status: 500 });
+    }
+    url = buildBunnyEmbedUrl(libraryId, bunnyVideoId);
   }
-
-  const url = buildBunnyEmbedUrl(libraryId, bunnyVideoId);
 
   await logAuditEvent('VIDEO_ACCESS_GRANTED', auth.user.email, videoId);
 
-  return NextResponse.json({ url });
+  return NextResponse.json({ url, provider: video.provider });
 }

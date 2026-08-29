@@ -74,12 +74,12 @@ export const videoSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(2000).optional().nullable(),
   thumbnail_url: safeUrl.optional().nullable(),
-  // Bunny Stream is the only supported provider — one less thing to get
-  // wrong when attaching a class, and one less code path to secure.
-  provider: z.literal('bunny').default('bunny'),
-  // "{libraryId}/{videoGuid}" — e.g.
-  // "503487/df2a65b4-d422-4c13-9327-44081b6f5f4f", taken straight out of
-  // the embed URL https://iframe.mediadelivery.net/embed/{libraryId}/{videoGuid}
+  // 'bunny' (paid, protected) or 'youtube' (free, unlisted — see
+  // app/api/video/[id]/play/route.ts for what that trade-off means).
+  provider: z.enum(['bunny', 'youtube']).default('bunny'),
+  // Bunny: "{libraryId}/{videoGuid}" out of the embed URL
+  // https://iframe.mediadelivery.net/embed/{libraryId}/{videoGuid}.
+  // YouTube: just the bare 11-character video id.
   source_ref: z.string().trim().min(1).max(2048),
   // Which part this is within the board, when a board has more than one
   // class attached (Part 1, Part 2, ...).
