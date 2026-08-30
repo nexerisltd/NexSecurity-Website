@@ -1,0 +1,123 @@
+diff --git a/components/VideoPlayer.tsx b/components/VideoPlayer.tsx
+index 4b8ef56..88f93fd 100644
+--- a/components/VideoPlayer.tsx
++++ b/components/VideoPlayer.tsx
+@@ -79,16 +79,15 @@ const QUALITY_LABELS: Record<string, string> = {
+   tiny: '144p',
+ };
+ 
+-// YouTube's IFrame API has, for years now, mostly stopped honoring manual
+-// quality selection and reporting real available levels: on most embeds
+-// getAvailableQualityLevels() returns just ['auto'] even when the video
+-// itself has every resolution up to 4K — YouTube's own quality-switching
+-// logic overrides it. This preset list is shown whenever the API reports
+-// 1 or fewer levels, so the menu isn't stuck showing only "Auto" — but
+-// selecting one is still just a *request* to YouTube (setPlaybackQuality),
+-// which YouTube is free to silently ignore. There is no client-side fix
+-// for that; it's a platform restriction, not a bug in this player.
+-const QUALITY_PRESETS = ['hd2160', 'hd1440', 'hd1080', 'hd720', 'large', 'medium', 'small', 'tiny', 'auto'];
++// YouTube's IFrame API officially deprecated manual quality control:
++// getPlaybackQuality, setPlaybackQuality, and getAvailableQualityLevels are
++// documented as "no longer supported" — setPlaybackQuality is now a no-op
++// with zero effect on playback, for every embed everywhere, not just this
++// one. See https://developers.google.com/youtube/iframe_api_reference
++// ("Deprecations and changes"). There is no client-side fix for that; it's
++// a platform restriction, not a bug in this player. The quality submenu
++// below reflects the real, live-polled resolution instead of pretending a
++// manual picker works.
+ 
+ const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+ 
+@@ -441,14 +440,20 @@ export function VideoPlayer({
+     showHint(rate === 1 ? 'Normal speed' : `${rate}×`);
+   }
+ 
++  // NOTE: as of Google's own IFrame API docs, getPlaybackQuality,
++  // setPlaybackQuality, and getAvailableQualityLevels are officially
++  // "no longer supported" — setPlaybackQuality is now a documented no-op
++  // with zero effect on what the viewer sees, for every embed, not just
++  // this one. There is no client-side workaround; this isn't fixable from
++  // this file. See https://developers.google.com/youtube/iframe_api_reference
++  // ("Deprecations and changes" section). This is still called for the
++  // rare case where the embed itself reports more than one real level
++  // (see the qualityLevels.length > 1 branch below) — best-effort only.
+   function changeQuality(level: string) {
+     ytPlayerRef.current?.setPlaybackQuality(level);
+     setQualityState(level);
+     setSettingsOpen(false);
+     setSettingsPanel('main');
+-    // Best-effort only: YouTube frequently reverts this to 'auto' on its
+-    // own within a second or two, regardless of what was requested here.
+-    // The polling above will pick up whatever YouTube actually settles on.
+   }
+ 
+   function toggleMute() {
+@@ -779,6 +784,9 @@ export function VideoPlayer({
+                           <span aria-hidden>›</span>
+                         </span>
+                       </button>
++                      <p className="px-3.5 pb-1.5 pt-0.5 text-[10px] leading-snug text-white/35">
++                        YouTube manages quality automatically for embedded players.
++                      </p>
+                     </>
+                   )}
+ 
+@@ -817,22 +825,43 @@ export function VideoPlayer({
+                       >
+                         <span aria-hidden>‹</span> Quality
+                       </button>
+-                      {(qualityLevels.length > 1 ? qualityLevels : QUALITY_PRESETS).map((level) => (
+-                        <button
+-                          key={level}
+-                          onClick={() => changeQuality(level)}
+-                          className="flex w-full items-center justify-between px-3.5 py-2 text-left transition hover:bg-white/10"
+-                        >
+-                          <span className={level === quality ? 'text-signal-glow' : ''}>
+-                            {QUALITY_LABELS[level] ?? level}
+-                          </span>
+-                          {quality === level && (
+-                            <span aria-hidden className="text-signal-glow">
+-                              ✓
++                      {qualityLevels.length > 1 ? (
++                        // Genuinely reported by this embed (rare, but the API
++                        // allows it) — selecting one is still just a request
++                        // YouTube is free to ignore, so this stays honest
++                        // rather than promising a guaranteed switch.
++                        qualityLevels.map((level) => (
++                          <button
++                            key={level}
++                            onClick={() => changeQuality(level)}
++                            className="flex w-full items-center justify-between px-3.5 py-2 text-left transition hover:bg-white/10"
++                          >
++                            <span className={level === quality ? 'text-signal-glow' : ''}>
++                              {QUALITY_LABELS[level] ?? level}
+                             </span>
+-                          )}
+-                        </button>
+-                      ))}
++                            {quality === level && (
++                              <span aria-hidden className="text-signal-glow">
++                                ✓
++                              </span>
++                            )}
++                          </button>
++                        ))
++                      ) : (
++                        <div className="px-3.5 py-3 text-left">
++                          <p className="flex items-center gap-1.5">
++                            <span className="text-signal-glow">
++                              {QUALITY_LABELS[quality] ?? quality}
++                            </span>
++                            <span className="text-white/40">— currently playing</span>
++                          </p>
++                          <p className="mt-1.5 text-[10px] leading-snug text-white/40">
++                            YouTube&apos;s embedded player no longer accepts manual
++                            quality requests — it picks resolution itself based on
++                            connection speed and window size, and there&apos;s no
++                            way for any site embedding YouTube to override that.
++                          </p>
++                        </div>
++                      )}
+                     </>
+                   )}
+                 </div>

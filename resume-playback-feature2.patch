@@ -1,0 +1,645 @@
+diff --git a/app/api/video/[id]/play/route.ts b/app/api/video/[id]/play/route.ts
+index 38275e5..308e549 100644
+--- a/app/api/video/[id]/play/route.ts
++++ b/app/api/video/[id]/play/route.ts
+@@ -71,5 +71,21 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
+ 
+   await logAuditEvent('VIDEO_ACCESS_GRANTED', auth.user.email, videoId);
+ 
+-  return NextResponse.json({ url, provider: video.provider });
++  // "Resume playback" — best-effort, never blocks/fails the response if
++  // this lookup errors for any reason. Only meaningful on the very first
++  // load; VideoPlayer.tsx's periodic heartbeat re-check also hits this
++  // route but deliberately ignores this field so an already-playing
++  // video is never re-seeked mid-session.
++  let resumeSeconds: number | null = null;
++  const { data: progress } = await adminClient
++    .from('video_progress')
++    .select('position_seconds')
++    .eq('user_email', auth.user.email)
++    .eq('video_id', videoId)
++    .maybeSingle();
++  if (progress?.position_seconds && progress.position_seconds > 5) {
++    resumeSeconds = progress.position_seconds;
++  }
++
++  return NextResponse.json({ url, provider: video.provider, resumeSeconds });
+ }
+diff --git a/app/api/video/[id]/progress/route.ts b/app/api/video/[id]/progress/route.ts
+new file mode 100644
+index 0000000..e819335
+--- /dev/null
++++ b/app/api/video/[id]/progress/route.ts
+@@ -0,0 +1,82 @@
++import { NextResponse, type NextRequest } from 'next/server';
++import { requireAuthorized } from '@/lib/auth';
++import { createSupabaseAdminClient } from '@/lib/supabase/admin';
++import { uuidSchema, videoProgressSchema } from '@/lib/validation';
++import { checkRateLimit } from '@/lib/rateLimit';
++
++export const dynamic = 'force-dynamic';
++
++/**
++ * "Resume playback" support. VideoPlayer.tsx calls this periodically
++ * (every ~15s while playing) and again on pause/unload, for BOTH
++ * providers (bunny + youtube) — reported directly from the client since
++ * that's the only place actual playback position is known. The saved
++ * value is later read back by /api/video/[id]/play so reopening a class
++ * auto-seeks to where the student left off.
++ *
++ * Same auth + board-published gate as /play, repeated here rather than
++ * shared for the same reason /download does: never trust that a caller
++ * got here legitimately just because it hit this route.
++ */
++export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
++  const auth = await requireAuthorized();
++  if (!auth.ok) {
++    return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++  }
++
++  const parsedId = uuidSchema.safeParse(params.id);
++  if (!parsedId.success) {
++    return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
++  }
++  const videoId = parsedId.data;
++
++  // Generous but bounded — this fires roughly every 15s during normal
++  // playback, well under this, while still stopping abuse/loops.
++  const rl = checkRateLimit(`video_progress:${auth.user.email}`, 60, 60_000);
++  if (!rl.allowed) {
++    return NextResponse.json({ error: 'Too many requests. Slow down.' }, { status: 429 });
++  }
++
++  let body: unknown;
++  try {
++    body = await request.json();
++  } catch {
++    return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
++  }
++
++  const parsed = videoProgressSchema.safeParse(body);
++  if (!parsed.success) {
++    return NextResponse.json({ error: 'Invalid progress payload.' }, { status: 400 });
++  }
++
++  const adminClient = createSupabaseAdminClient();
++
++  // Re-check the video is real and its board is published — same shape
++  // as /play's gate — before writing anything tied to this videoId.
++  const { data: video } = await adminClient
++    .from('videos')
++    .select('id, board:board_id(published)')
++    .eq('id', videoId)
++    .maybeSingle();
++  const board = video?.board as unknown as { published: boolean } | null;
++  if (!video || !board || !board.published) {
++    return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
++  }
++
++  const { error } = await adminClient.from('video_progress').upsert(
++    {
++      user_email: auth.user.email,
++      video_id: videoId,
++      position_seconds: parsed.data.position_seconds,
++      duration_seconds: parsed.data.duration_seconds ?? null,
++      updated_at: new Date().toISOString(),
++    },
++    { onConflict: 'user_email,video_id' }
++  );
++
++  if (error) {
++    return NextResponse.json({ error: 'Could not save progress.' }, { status: 500 });
++  }
++
++  return NextResponse.json({ ok: true });
++}
+diff --git a/app/learn/video/[id]/page.tsx b/app/learn/video/[id]/page.tsx
+index d180f33..d3bde92 100644
+--- a/app/learn/video/[id]/page.tsx
++++ b/app/learn/video/[id]/page.tsx
+@@ -69,6 +69,22 @@ export default async function VideoPage({ params }: { params: { id: string } })
+   // client-side fetch to /play, which surfaces the real error message —
+   // no error-handling logic duplicated here.
+ 
++  // "Resume playback" — same lookup /api/video/[id]/play does on a
++  // client-side load; done here too so the very first server-rendered
++  // paint already knows where to seek, instead of a flash-then-jump once
++  // hydration catches up. Best-effort: null on any lookup issue just
++  // means "start from 0:00", same as a first-time watch.
++  let initialResumeSeconds: number | null = null;
++  const { data: progress } = await adminClient
++    .from('video_progress')
++    .select('position_seconds')
++    .eq('user_email', auth.email)
++    .eq('video_id', videoId)
++    .maybeSingle();
++  if (progress?.position_seconds && progress.position_seconds > 5) {
++    initialResumeSeconds = progress.position_seconds;
++  }
++
+   const resources = (video.video_resources ?? []).sort(
+     (a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order
+   );
+@@ -137,7 +153,12 @@ export default async function VideoPage({ params }: { params: { id: string } })
+ 
+         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_340px]">
+           <div className="min-w-0">
+-            <VideoPlayer videoId={video.id} initialUrl={initialPlaybackUrl} initialProvider={video.provider} />
++            <VideoPlayer
++              videoId={video.id}
++              initialUrl={initialPlaybackUrl}
++              initialProvider={video.provider}
++              initialResumeSeconds={initialResumeSeconds}
++            />
+ 
+             <div className="mt-6 flex flex-wrap items-start justify-between gap-3">
+               <h1 className="font-display text-xl font-semibold text-ink">{video.title}</h1>
+diff --git a/components/VideoPlayer.tsx b/components/VideoPlayer.tsx
+index 4b8ef56..4ab12ef 100644
+--- a/components/VideoPlayer.tsx
++++ b/components/VideoPlayer.tsx
+@@ -79,16 +79,15 @@ const QUALITY_LABELS: Record<string, string> = {
+   tiny: '144p',
+ };
+ 
+-// YouTube's IFrame API has, for years now, mostly stopped honoring manual
+-// quality selection and reporting real available levels: on most embeds
+-// getAvailableQualityLevels() returns just ['auto'] even when the video
+-// itself has every resolution up to 4K — YouTube's own quality-switching
+-// logic overrides it. This preset list is shown whenever the API reports
+-// 1 or fewer levels, so the menu isn't stuck showing only "Auto" — but
+-// selecting one is still just a *request* to YouTube (setPlaybackQuality),
+-// which YouTube is free to silently ignore. There is no client-side fix
+-// for that; it's a platform restriction, not a bug in this player.
+-const QUALITY_PRESETS = ['hd2160', 'hd1440', 'hd1080', 'hd720', 'large', 'medium', 'small', 'tiny', 'auto'];
++// YouTube's IFrame API officially deprecated manual quality control:
++// getPlaybackQuality, setPlaybackQuality, and getAvailableQualityLevels are
++// documented as "no longer supported" — setPlaybackQuality is now a no-op
++// with zero effect on playback, for every embed everywhere, not just this
++// one. See https://developers.google.com/youtube/iframe_api_reference
++// ("Deprecations and changes"). There is no client-side fix for that; it's
++// a platform restriction, not a bug in this player. The quality submenu
++// below reflects the real, live-polled resolution instead of pretending a
++// manual picker works.
+ 
+ const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+ 
+@@ -96,6 +95,7 @@ const SEEK_SECONDS = 10;
+ const HOLD_THRESHOLD_MS = 320;
+ const HEARTBEAT_MS = 4 * 60 * 1000; // well inside the ~10-minute token expiry
+ const YT_TIME_POLL_MS = 400; // YT's API has no timeupdate event, only polling
++const PROGRESS_SAVE_MS = 15 * 1000; // "resume playback" checkpoint cadence
+ 
+ function formatTime(totalSeconds: number): string {
+   if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return '0:00';
+@@ -111,10 +111,12 @@ export function VideoPlayer({
+   videoId,
+   initialUrl,
+   initialProvider,
++  initialResumeSeconds,
+ }: {
+   videoId: string;
+   initialUrl?: string | null;
+   initialProvider?: string | null;
++  initialResumeSeconds?: number | null;
+ }) {
+   const [url, setUrl] = useState<string | null>(initialUrl ?? null);
+   const [provider, setProvider] = useState<string | null>(initialProvider ?? null);
+@@ -135,6 +137,22 @@ export function VideoPlayer({
+   const holdingFastRef = useRef(false);
+   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+ 
++  // --- "Resume playback": last watched position for this (user, video),
++  // read either from the server-rendered page (initialResumeSeconds) or
++  // from this component's own client-side /play fetch below. Applied
++  // (seeked to) exactly once per mount via resumeAppliedRef — after
++  // that, normal playback/seeking takes over and this is never consulted
++  // again until the page is reloaded. Refs (not just the ytCurrentTime /
++  // Bunny timeupdate state) track the live position so an unload/tab-close
++  // flush always has an up-to-date value to send without waiting on an
++  // async getCurrentTime callback.
++  const [resumeSeconds, setResumeSeconds] = useState<number | null>(initialResumeSeconds ?? null);
++  const resumeAppliedRef = useRef(false);
++  const ytCurrentTimeRef = useRef(0);
++  const ytDurationRef = useRef(0);
++  const bunnyPositionRef = useRef(0);
++  const bunnyDurationRef = useRef(0);
++
+   // --- YouTube (IFrame Player API) state ---
+   const [ytApiReady, setYtApiReady] = useState(false);
+   const [ytPlaying, setYtPlaying] = useState(false);
+@@ -154,6 +172,66 @@ export function VideoPlayer({
+   const [qualityLevels, setQualityLevels] = useState<string[]>([]);
+   const settingsRef = useRef<HTMLDivElement>(null);
+ 
++  // Reports the current watch position to /api/video/[id]/progress —
++  // fire-and-forget, best-effort (a failed save just means next load
++  // starts from the previous checkpoint instead of the latest one, never
++  // blocks or interrupts playback). Uses sendBeacon when available (works
++  // even during page unload/tab close, unlike a normal fetch), falling
++  // back to a keepalive fetch otherwise.
++  const reportProgress = useCallback(
++    (position: number, duration?: number) => {
++      if (!Number.isFinite(position) || position < 0) return;
++      const payload: { position_seconds: number; duration_seconds?: number } = {
++        position_seconds: Math.floor(position),
++      };
++      if (Number.isFinite(duration) && (duration ?? 0) > 0) {
++        payload.duration_seconds = Math.floor(duration as number);
++      }
++      const body = JSON.stringify(payload);
++      try {
++        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
++          navigator.sendBeacon(`/api/video/${videoId}/progress`, new Blob([body], { type: 'application/json' }));
++        } else {
++          fetch(`/api/video/${videoId}/progress`, {
++            method: 'POST',
++            headers: { 'Content-Type': 'application/json' },
++            body,
++            keepalive: true,
++          }).catch(() => {});
++        }
++      } catch {
++        // best-effort — a dropped progress report is never worth surfacing
++      }
++    },
++    [videoId]
++  );
++
++  // Flush whichever provider is currently active on tab close/hide —
++  // covers the common case of a student just closing the tab mid-class
++  // without ever hitting pause. Also flushed on unmount for in-app (SPA)
++  // navigation away from the page, which never fires beforeunload/pagehide.
++  useEffect(() => {
++    function flush() {
++      if (isYoutube && ytPlayerRef.current) {
++        reportProgress(ytCurrentTimeRef.current, ytDurationRef.current);
++      } else if (isBunny && playerRef.current) {
++        reportProgress(bunnyPositionRef.current, bunnyDurationRef.current);
++      }
++    }
++    const onVisibility = () => {
++      if (document.visibilityState === 'hidden') flush();
++    };
++    document.addEventListener('visibilitychange', onVisibility);
++    window.addEventListener('pagehide', flush);
++    window.addEventListener('beforeunload', flush);
++    return () => {
++      document.removeEventListener('visibilitychange', onVisibility);
++      window.removeEventListener('pagehide', flush);
++      window.removeEventListener('beforeunload', flush);
++      flush();
++    };
++  }, [isYoutube, isBunny, reportProgress]);
++
+   const fetchPlaybackUrl = useCallback(async (): Promise<boolean> => {
+     try {
+       const res = await fetch(`/api/video/${videoId}/play`, { method: 'POST' });
+@@ -185,6 +263,7 @@ export function VideoPlayer({
+         if (!cancelled) {
+           setUrl(data.url);
+           setProvider(data.provider ?? null);
++          if (typeof data.resumeSeconds === 'number') setResumeSeconds(data.resumeSeconds);
+         }
+       } catch (e) {
+         if (!cancelled) setError(e instanceof Error ? e.message : 'Playback unavailable.');
+@@ -230,12 +309,49 @@ export function VideoPlayer({
+       });
+       player.on('pause', () => {
+         isPlayingRef.current = false;
++        // Save the moment playback pauses — the most common natural
++        // checkpoint (student steps away, switches tabs, etc).
++        reportProgress(bunnyPositionRef.current, bunnyDurationRef.current);
++      });
++      // player.js's Bunny implementation fires this continuously during
++      // playback with { seconds, duration } — used both to keep the refs
++      // above current (for the unload flush) and to drive the periodic
++      // save interval below, without polling getCurrentTime ourselves.
++      player.on('timeupdate', (data: unknown) => {
++        const d = data as { seconds?: number; duration?: number } | undefined;
++        if (typeof d?.seconds === 'number') bunnyPositionRef.current = d.seconds;
++        if (typeof d?.duration === 'number' && d.duration > 0) bunnyDurationRef.current = d.duration;
+       });
++      // Resume playback — apply the saved position exactly once, and
++      // only if it's not trivially close to the start or the very end
++      // (near-end resume would just replay the last few seconds, which
++      // reads as broken rather than helpful).
++      if (!resumeAppliedRef.current && resumeSeconds && resumeSeconds > 5) {
++        resumeAppliedRef.current = true;
++        player.getDuration((duration) => {
++          if (!duration || duration - resumeSeconds > 10) {
++            player.setCurrentTime(resumeSeconds);
++            bunnyPositionRef.current = resumeSeconds;
++          }
++        });
++      }
+     });
+     return () => {
+       playerRef.current = null;
+     };
+-  }, [isBunny, playerJsReady, url]);
++  }, [isBunny, playerJsReady, url, resumeSeconds, reportProgress]);
++
++  // Periodic progress save while a Bunny class is actually playing —
++  // independent of the timeupdate event's own frequency, so this is a
++  // predictable ~15s cadence regardless of how often player.js fires it.
++  useEffect(() => {
++    if (!isBunny || !url) return;
++    const interval = setInterval(() => {
++      if (!isPlayingRef.current) return;
++      reportProgress(bunnyPositionRef.current, bunnyDurationRef.current);
++    }, PROGRESS_SAVE_MS);
++    return () => clearInterval(interval);
++  }, [isBunny, url, reportProgress]);
+ 
+   // --- YouTube: load the IFrame Player API script once, globally ---
+   useEffect(() => {
+@@ -291,18 +407,37 @@ export function VideoPlayer({
+       events: {
+         onReady: (e) => {
+           ytPlayerRef.current = e.target;
+-          setYtDuration(e.target.getDuration());
++          const duration = e.target.getDuration();
++          setYtDuration(duration);
++          ytDurationRef.current = duration;
+           setYtMuted(e.target.isMuted());
+           setYtBuffering(false);
+           setQualityLevels(e.target.getAvailableQualityLevels?.() ?? []);
+           setQualityState(e.target.getPlaybackQuality?.() ?? 'auto');
+           setSpeedState(e.target.getPlaybackRate?.() ?? 1);
++          // Resume playback — same "not trivially close to start or end"
++          // rule as the Bunny path above, applied exactly once per mount.
++          if (!resumeAppliedRef.current && resumeSeconds && resumeSeconds > 5) {
++            resumeAppliedRef.current = true;
++            if (!duration || duration - resumeSeconds > 10) {
++              e.target.seekTo(resumeSeconds, true);
++              setYtCurrentTime(resumeSeconds);
++              ytCurrentTimeRef.current = resumeSeconds;
++            }
++          }
+         },
+         onStateChange: (e) => {
+           setYtPlaying(e.data === window.YT?.PlayerState.PLAYING);
+           setYtBuffering(e.data === window.YT?.PlayerState.BUFFERING);
+           if (e.data === window.YT?.PlayerState.PLAYING) {
+-            setYtDuration(e.target.getDuration());
++            const duration = e.target.getDuration();
++            setYtDuration(duration);
++            ytDurationRef.current = duration;
++          }
++          // Save the moment playback pauses or ends — same reasoning as
++          // the Bunny 'pause' handler above.
++          if (e.data === window.YT?.PlayerState.PAUSED || e.data === window.YT?.PlayerState.ENDED) {
++            reportProgress(ytCurrentTimeRef.current, ytDurationRef.current);
+           }
+         },
+       },
+@@ -312,7 +447,7 @@ export function VideoPlayer({
+       player.destroy?.();
+       ytPlayerRef.current = null;
+     };
+-  }, [isYoutube, ytApiReady, url]);
++  }, [isYoutube, ytApiReady, url, resumeSeconds, reportProgress]);
+ 
+   // --- YouTube: poll current time while playing to drive the seek bar.
+   // There's no push-based "timeupdate" event in this API — polling is
+@@ -323,7 +458,9 @@ export function VideoPlayer({
+       if (ytSeekingRef.current) return; // don't fight an in-progress drag
+       const yp = ytPlayerRef.current;
+       if (!yp) return;
+-      setYtCurrentTime(yp.getCurrentTime());
++      const t = yp.getCurrentTime();
++      setYtCurrentTime(t);
++      ytCurrentTimeRef.current = t;
+       // Also re-read the real playback quality — YouTube can silently
+       // switch this on its own (bandwidth changes, or just overriding a
+       // manual selection), so this keeps the settings menu honest instead
+@@ -334,6 +471,16 @@ export function VideoPlayer({
+     return () => clearInterval(interval);
+   }, [isYoutube, ytPlaying]);
+ 
++  // Periodic "resume playback" checkpoint while a YouTube class is
++  // actually playing — same cadence/purpose as the Bunny interval above.
++  useEffect(() => {
++    if (!isYoutube || !ytPlaying) return;
++    const interval = setInterval(() => {
++      reportProgress(ytCurrentTimeRef.current, ytDurationRef.current);
++    }, PROGRESS_SAVE_MS);
++    return () => clearInterval(interval);
++  }, [isYoutube, ytPlaying, reportProgress]);
++
+   function showHint(text: string) {
+     setHint(text);
+     if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+@@ -441,14 +588,20 @@ export function VideoPlayer({
+     showHint(rate === 1 ? 'Normal speed' : `${rate}×`);
+   }
+ 
++  // NOTE: as of Google's own IFrame API docs, getPlaybackQuality,
++  // setPlaybackQuality, and getAvailableQualityLevels are officially
++  // "no longer supported" — setPlaybackQuality is now a documented no-op
++  // with zero effect on what the viewer sees, for every embed, not just
++  // this one. There is no client-side workaround; this isn't fixable from
++  // this file. See https://developers.google.com/youtube/iframe_api_reference
++  // ("Deprecations and changes" section). This is still called for the
++  // rare case where the embed itself reports more than one real level
++  // (see the qualityLevels.length > 1 branch below) — best-effort only.
+   function changeQuality(level: string) {
+     ytPlayerRef.current?.setPlaybackQuality(level);
+     setQualityState(level);
+     setSettingsOpen(false);
+     setSettingsPanel('main');
+-    // Best-effort only: YouTube frequently reverts this to 'auto' on its
+-    // own within a second or two, regardless of what was requested here.
+-    // The polling above will pick up whatever YouTube actually settles on.
+   }
+ 
+   function toggleMute() {
+@@ -779,6 +932,9 @@ export function VideoPlayer({
+                           <span aria-hidden>›</span>
+                         </span>
+                       </button>
++                      <p className="px-3.5 pb-1.5 pt-0.5 text-[10px] leading-snug text-white/35">
++                        YouTube manages quality automatically for embedded players.
++                      </p>
+                     </>
+                   )}
+ 
+@@ -817,22 +973,43 @@ export function VideoPlayer({
+                       >
+                         <span aria-hidden>‹</span> Quality
+                       </button>
+-                      {(qualityLevels.length > 1 ? qualityLevels : QUALITY_PRESETS).map((level) => (
+-                        <button
+-                          key={level}
+-                          onClick={() => changeQuality(level)}
+-                          className="flex w-full items-center justify-between px-3.5 py-2 text-left transition hover:bg-white/10"
+-                        >
+-                          <span className={level === quality ? 'text-signal-glow' : ''}>
+-                            {QUALITY_LABELS[level] ?? level}
+-                          </span>
+-                          {quality === level && (
+-                            <span aria-hidden className="text-signal-glow">
+-                              ✓
++                      {qualityLevels.length > 1 ? (
++                        // Genuinely reported by this embed (rare, but the API
++                        // allows it) — selecting one is still just a request
++                        // YouTube is free to ignore, so this stays honest
++                        // rather than promising a guaranteed switch.
++                        qualityLevels.map((level) => (
++                          <button
++                            key={level}
++                            onClick={() => changeQuality(level)}
++                            className="flex w-full items-center justify-between px-3.5 py-2 text-left transition hover:bg-white/10"
++                          >
++                            <span className={level === quality ? 'text-signal-glow' : ''}>
++                              {QUALITY_LABELS[level] ?? level}
+                             </span>
+-                          )}
+-                        </button>
+-                      ))}
++                            {quality === level && (
++                              <span aria-hidden className="text-signal-glow">
++                                ✓
++                              </span>
++                            )}
++                          </button>
++                        ))
++                      ) : (
++                        <div className="px-3.5 py-3 text-left">
++                          <p className="flex items-center gap-1.5">
++                            <span className="text-signal-glow">
++                              {QUALITY_LABELS[quality] ?? quality}
++                            </span>
++                            <span className="text-white/40">— currently playing</span>
++                          </p>
++                          <p className="mt-1.5 text-[10px] leading-snug text-white/40">
++                            YouTube&apos;s embedded player no longer accepts manual
++                            quality requests — it picks resolution itself based on
++                            connection speed and window size, and there&apos;s no
++                            way for any site embedding YouTube to override that.
++                          </p>
++                        </div>
++                      )}
+                     </>
+                   )}
+                 </div>
+diff --git a/lib/validation.ts b/lib/validation.ts
+index 634a33c..43fa829 100644
+--- a/lib/validation.ts
++++ b/lib/validation.ts
+@@ -122,3 +122,13 @@ export const eBookUpdateSchema = eBookSchema.partial().extend({
+ });
+ 
+ export const uuidSchema = z.string().uuid();
++
++// Reported periodically by VideoPlayer.tsx (both providers) while a class
++// plays, to power "resume where I left off". Capped at ~24h so a client
++// bug (or a tampered request) can't write an absurd value; duration is
++// optional since it isn't always known yet (e.g. YouTube before
++// onReady/getDuration resolves).
++export const videoProgressSchema = z.object({
++  position_seconds: z.number().int().min(0).max(24 * 60 * 60),
++  duration_seconds: z.number().int().min(0).max(24 * 60 * 60).optional().nullable(),
++});
+diff --git a/supabase/migrations/0006_video_progress.sql b/supabase/migrations/0006_video_progress.sql
+new file mode 100644
+index 0000000..219914e
+--- /dev/null
++++ b/supabase/migrations/0006_video_progress.sql
+@@ -0,0 +1,36 @@
++-- "Resume playback" support: one row per (user, video) holding the last
++-- watched position, so reopening a class auto-seeks back to where the
++-- student left off instead of always restarting at 0:00. Works for both
++-- providers (bunny + youtube) — VideoPlayer.tsx periodically reports the
++-- current time via /api/video/[id]/progress while playing, and
++-- /api/video/[id]/play returns the saved position on load.
++--
++-- Run this once against any existing project. Safe to run multiple times.
++
++create table if not exists public.video_progress (
++  id uuid primary key default gen_random_uuid(),
++  user_email text not null,
++  video_id uuid not null references public.videos (id) on delete cascade,
++  position_seconds integer not null default 0,
++  duration_seconds integer,
++  updated_at timestamptz not null default now(),
++  unique (user_email, video_id)
++);
++
++create index if not exists idx_video_progress_user_video on public.video_progress (lower(user_email), video_id);
++
++alter table public.video_progress enable row level security;
++
++-- A user may only read/write their OWN progress rows. All access in
++-- practice goes through the service-role admin client from
++-- app/api/video/[id]/play and app/api/video/[id]/progress (same pattern
++-- as videos / video_playback_tokens), but this policy is still the real
++-- backstop if that ever changes.
++drop policy if exists video_progress_self on public.video_progress;
++create policy video_progress_self on public.video_progress
++  for all using (
++    lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', '')) or public.is_admin()
++  )
++  with check (
++    lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', '')) or public.is_admin()
++  );
+diff --git a/supabase/schema.sql b/supabase/schema.sql
+index cfbd9f3..24de4c2 100644
+--- a/supabase/schema.sql
++++ b/supabase/schema.sql
+@@ -227,6 +227,25 @@ create index if not exists idx_user_devices_user_status on public.user_devices (
+ create index if not exists idx_user_devices_device_id on public.user_devices (device_id);
+ create index if not exists idx_user_devices_last_seen on public.user_devices (user_id, last_seen desc);
+ 
++-- ---------------------------------------------------------------------------
++-- 10. video_progress — "resume playback". One row per (user, video)
++--     holding the last watched position, updated periodically by
++--     VideoPlayer.tsx while a class is playing, and read back by
++--     /api/video/[id]/play so reopening a class auto-seeks to where the
++--     student left off. Works for both providers (bunny + youtube).
++-- ---------------------------------------------------------------------------
++create table if not exists public.video_progress (
++  id uuid primary key default gen_random_uuid(),
++  user_email text not null,
++  video_id uuid not null references public.videos (id) on delete cascade,
++  position_seconds integer not null default 0,
++  duration_seconds integer,
++  updated_at timestamptz not null default now(),
++  unique (user_email, video_id)
++);
++
++create index if not exists idx_video_progress_user_video on public.video_progress (lower(user_email), video_id);
++
+ -- ============================================================================
+ -- ROW LEVEL SECURITY
+ -- ============================================================================
+@@ -241,6 +260,7 @@ alter table public.video_playback_tokens enable row level security;
+ alter table public.video_resources enable row level security;
+ alter table public.e_books enable row level security;
+ alter table public.user_devices enable row level security;
++alter table public.video_progress enable row level security;
+ 
+ -- Helper: is the currently authenticated user an ACTIVE authorized user?
+ create or replace function public.is_authorized() returns boolean as $$
+@@ -349,6 +369,20 @@ create policy playback_tokens_self_select on public.video_playback_tokens
+     lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', '')) or public.is_admin()
+   );
+ 
++-- video_progress: a user may only read/write their OWN progress rows.
++-- All access in practice goes through the service-role admin client from
++-- app/api/video/[id]/play and app/api/video/[id]/progress (same pattern
++-- as videos / video_playback_tokens above), but this policy is still the
++-- real backstop if that ever changes.
++drop policy if exists video_progress_self on public.video_progress;
++create policy video_progress_self on public.video_progress
++  for all using (
++    lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', '')) or public.is_admin()
++  )
++  with check (
++    lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', '')) or public.is_admin()
++  );
++
+ -- ============================================================================
+ -- Seed: replace with your own admin email after first deploy, e.g.:
+ -- insert into public.authorized_users (email, role, status)
