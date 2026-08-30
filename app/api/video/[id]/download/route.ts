@@ -9,6 +9,12 @@ import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
 
+// Downloads are currently disabled site-wide (the button was removed from
+// the video page too). Gated behind an env var, rather than deleted or
+// hard-returned, so re-enabling later is a one-line config change and the
+// rest of this route stays live/type-checked instead of going dead code.
+const DOWNLOADS_ENABLED = process.env.ENABLE_VIDEO_DOWNLOADS === 'true';
+
 /**
  * Same authorization gate as /api/video/[id]/play (must be authenticated,
  * authorized, and the video's board must be published) — repeated here
@@ -40,6 +46,10 @@ async function authorizeAndLoadVideo(videoId: string, email: string) {
 /** Lists which resolutions actually exist for this video, so the frontend
  * never offers a resolution that would 404. */
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  if (!DOWNLOADS_ENABLED) {
+    return NextResponse.json({ error: 'Downloads are currently disabled.' }, { status: 403 });
+  }
+
   const auth = await requireAuthorized();
   if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
 
@@ -67,6 +77,10 @@ const downloadRequestSchema = z.object({
 /** Issues one short-lived signed download URL for exactly the requested,
  * already-verified-available resolution. */
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+  if (!DOWNLOADS_ENABLED) {
+    return NextResponse.json({ error: 'Downloads are currently disabled.' }, { status: 403 });
+  }
+
   const auth = await requireAuthorized();
   if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
 

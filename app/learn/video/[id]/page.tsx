@@ -8,7 +8,6 @@ import { buildBunnyEmbedUrl } from '@/lib/bunny';
 import { buildYoutubeEmbedUrl } from '@/lib/youtube';
 import { logAuditEvent } from '@/lib/audit';
 import { VideoPlayer } from '@/components/VideoPlayer';
-import { VideoDownloadButton } from '@/components/VideoDownloadButton';
 import { PartsList } from '@/components/PartsList';
 
 export const dynamic = 'force-dynamic';
@@ -142,7 +141,8 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
 
             <div className="mt-6 flex flex-wrap items-start justify-between gap-3">
               <h1 className="font-display text-xl font-semibold text-ink">{video.title}</h1>
-              <VideoDownloadButton videoId={video.id} fallbackUrl={video.download_url} />
+              {/* Download button intentionally removed: video downloads are
+                  disabled for class pages per current policy. */}
             </div>
 
             {resources.length > 0 && (

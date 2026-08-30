@@ -16,6 +16,12 @@ export const maxDuration = 300;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? '';
 
+// Downloads are currently disabled site-wide (the button was removed from
+// the video page too). Gated behind an env var, rather than deleted or
+// hard-returned, so re-enabling later is a one-line config change and the
+// rest of this route stays live/type-checked instead of going dead code.
+const DOWNLOADS_ENABLED = process.env.ENABLE_VIDEO_DOWNLOADS === 'true';
+
 /**
  * Some Bunny pull zones have hotlink/User-Agent protection that quietly
  * rejects plain server-to-server fetches (no Referer, generic runtime UA)
@@ -150,6 +156,10 @@ function parseSegments(
 /** GET without ?resolution= lists available resolutions.
  *  GET with ?resolution=240p streams that resolution as a downloadable file. */
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+  if (!DOWNLOADS_ENABLED) {
+    return NextResponse.json({ error: 'Downloads are currently disabled.' }, { status: 403 });
+  }
+
   const auth = await requireAuthorized();
   if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
 
