@@ -14,3 +14,12 @@
 export function buildYoutubeEmbedUrl(videoGuid: string): string {
   return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoGuid)}?modestbranding=1&rel=0&iv_load_policy=3&playsinline=1`;
 }
+
+/** The inverse of buildYoutubeEmbedUrl — pulls the bare video id back out
+ * of an embed URL built by it. Used by VideoPlayer.tsx to bootstrap the
+ * IFrame Player API (which wants a bare video id, not a URL) from the
+ * same `url` the server already sent, instead of a separate field. */
+export function extractYoutubeId(embedUrl: string): string | null {
+  const match = embedUrl.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+  return match ? match[1] : null;
+}

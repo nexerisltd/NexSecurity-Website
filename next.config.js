@@ -1,8 +1,20 @@
 /** @type {import('next').NextConfig} */
 
-// Bunny Stream embeds run in an iframe from iframe.mediadelivery.net, so
-// that origin needs an explicit frame-src allowance. If you switch video
-// providers later, swap this for the new provider's embed domain instead.
+// Video embeds run in an iframe, so their origin needs an explicit
+// frame-src allowance: iframe.mediadelivery.net (Bunny) and
+// www.youtube-nocookie.com (YouTube). Adding a THIRD video provider
+// later needs its embed domain added here too, or the browser silently
+// blocks the iframe with "This content is blocked" — CSP enforcement,
+// not a bug in the player — exactly what happened when YouTube support
+// was first added and this line wasn't updated alongside it.
+//
+// script-src additionally allows www.youtube.com and s.ytimg.com:
+// components/VideoPlayer.tsx loads YouTube's official IFrame Player API
+// script from there to build a fully custom control bar (see the long
+// comment in that file for why — short version: YouTube's policies
+// prohibit selectively hiding/blocking parts of their native player, but
+// building a complete custom replacement via their own API is the
+// sanctioned way to do this).
 //
 // script-src only gets 'unsafe-eval' in development: Next.js's dev-mode
 // Fast Refresh / HMR runtime uses eval() internally, which this CSP
@@ -13,13 +25,13 @@
 const isDev = process.env.NODE_ENV === 'development';
 const ContentSecurityPolicy = `
   default-src 'self';
-  script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''};
+  script-src 'self' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com${isDev ? " 'unsafe-eval'" : ''};
   style-src 'self' 'unsafe-inline';
   img-src 'self' data: blob: https:;
   font-src 'self' data:;
   connect-src 'self' https://*.supabase.co wss://*.supabase.co${isDev ? ' ws://localhost:*' : ''};
   media-src 'self' https://*.supabase.co blob:;
-  frame-src 'self' https://iframe.mediadelivery.net;
+  frame-src 'self' https://iframe.mediadelivery.net https://www.youtube-nocookie.com;
   frame-ancestors 'none';
   base-uri 'self';
   form-action 'self';
