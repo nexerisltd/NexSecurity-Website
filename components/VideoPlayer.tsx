@@ -145,6 +145,11 @@ export function VideoPlayer({
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdingFastRef = useRef(false);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Press-and-hold-to-2x on the video itself (touch or mouse), mirroring
+  // the space-hold shortcut above but for a direct press on the frame.
+  const touchHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchHoldingFastRef = useRef(false);
+  const suppressNextVideoClickRef = useRef(false);
 
   // --- "Resume playback": last watched position for this (user, video),
   // read either from the server-rendered page (initialResumeSeconds) or
@@ -624,10 +629,8 @@ export function VideoPlayer({
       if (!yp) return;
       if (yp.getPlayerState() === window.YT?.PlayerState.PLAYING) {
         yp.pauseVideo();
-        showHint('Paused');
       } else {
         yp.playVideo();
-        showHint('Playing');
       }
       return;
     }
@@ -635,11 +638,51 @@ export function VideoPlayer({
     if (!player) return;
     if (isPlayingRef.current) {
       player.pause();
-      showHint('Paused');
     } else {
       player.play();
-      showHint('Playing');
     }
+  }
+
+  function setPlaybackRateNow(rate: number) {
+    if (isYoutube) ytPlayerRef.current?.setPlaybackRate(rate);
+    else playerRef.current?.setPlaybackRate?.(rate);
+  }
+
+  // Press-and-hold anywhere on the video: past HOLD_THRESHOLD_MS it jumps
+  // to 2× for as long as it's held, like the space-hold shortcut but for
+  // touch/mouse directly on the frame. A quick tap/click is unaffected —
+  // it still falls through to togglePlayPause via onClick. Only a press
+  // that actually crossed the hold threshold suppresses the trailing
+  // click, so it doesn't also toggle play/pause on release.
+  function handleVideoPointerDown(e: React.PointerEvent) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (touchHoldTimerRef.current) clearTimeout(touchHoldTimerRef.current);
+    touchHoldTimerRef.current = setTimeout(() => {
+      touchHoldingFastRef.current = true;
+      setPlaybackRateNow(2);
+      showHint('2×');
+    }, HOLD_THRESHOLD_MS);
+  }
+
+  function endVideoHold() {
+    if (touchHoldTimerRef.current) {
+      clearTimeout(touchHoldTimerRef.current);
+      touchHoldTimerRef.current = null;
+    }
+    if (touchHoldingFastRef.current) {
+      touchHoldingFastRef.current = false;
+      setPlaybackRateNow(1);
+      showHint('1×');
+      suppressNextVideoClickRef.current = true;
+    }
+  }
+
+  function handleVideoClick() {
+    if (suppressNextVideoClickRef.current) {
+      suppressNextVideoClickRef.current = false;
+      return;
+    }
+    togglePlayPause();
   }
 
   // Close the settings menu on any click outside it (mirrors the pattern
@@ -756,11 +799,6 @@ export function VideoPlayer({
       return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
     }
 
-    function setRate(rate: number) {
-      if (isYoutube) ytPlayerRef.current?.setPlaybackRate(rate);
-      else playerRef.current?.setPlaybackRate?.(rate);
-    }
-
     function onKeyDown(e: KeyboardEvent) {
       const hasPlayer = isYoutube ? !!ytPlayerRef.current : !!playerRef.current;
       if (isTypingTarget(e.target) || !hasPlayer) return;
@@ -782,7 +820,7 @@ export function VideoPlayer({
           // Held past the threshold: switch to fast playback instead of
           // toggling play/pause.
           holdingFastRef.current = true;
-          setRate(2);
+          setPlaybackRateNow(2);
           showHint('2×');
         }, HOLD_THRESHOLD_MS);
       }
@@ -795,7 +833,7 @@ export function VideoPlayer({
 
       if (holdingFastRef.current) {
         holdingFastRef.current = false;
-        setRate(1);
+        setPlaybackRateNow(1);
         showHint('1×');
       } else {
         togglePlayPause();
@@ -808,6 +846,7 @@ export function VideoPlayer({
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
+      if (touchHoldTimerRef.current) clearTimeout(touchHoldTimerRef.current);
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -866,8 +905,17 @@ export function VideoPlayer({
       {isYoutube && url && !loading && !error && !revoked && (
         <>
           {/* YT.Player takes this div over and injects its own iframe —
-              no other React children ever go inside it. */}
-          <div className="absolute inset-0" onClick={togglePlayPause}>
+              no other React children ever go inside it. Press-and-hold
+              here jumps to 2× (see handleVideoPointerDown); a normal
+              tap/click still toggles play/pause. */}
+          <div
+            className="absolute inset-0"
+            onClick={handleVideoClick}
+            onPointerDown={handleVideoPointerDown}
+            onPointerUp={endVideoHold}
+            onPointerCancel={endVideoHold}
+            onPointerLeave={endVideoHold}
+          >
             <div ref={ytMountRef} className="pointer-events-none h-full w-full" />
           </div>
 

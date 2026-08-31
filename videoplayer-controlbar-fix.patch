@@ -1,0 +1,103 @@
+diff --git a/components/VideoPlayer.tsx b/components/VideoPlayer.tsx
+index 36be897..61af995 100644
+--- a/components/VideoPlayer.tsx
++++ b/components/VideoPlayer.tsx
+@@ -183,6 +183,68 @@ export function VideoPlayer({
+   const [qualityLevels, setQualityLevels] = useState<string[]>([]);
+   const settingsRef = useRef<HTMLDivElement>(null);
+ 
++  // --- Custom control bar auto-hide ---
++  // Driven entirely by JS state instead of CSS :hover, because :hover
++  // never fires on touch devices — that's why the bar used to get stuck
++  // visible on phones (a tap can leave a "sticky hover" until something
++  // else is tapped) and never hid itself while simply paused (e.g. a
++  // student pausing to copy something down). Any interaction with the
++  // player — pointer/touch movement, a tap, a keypress — "wakes" the bar
++  // and restarts the same countdown, whether the video is playing or
++  // paused; only the open settings menu suspends it.
++  const CONTROLS_HIDE_DELAY_MS = 2800;
++  const [controlsVisible, setControlsVisible] = useState(true);
++  const controlsHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
++
++  const wakeControls = useCallback(() => {
++    setControlsVisible(true);
++    if (controlsHideTimerRef.current) clearTimeout(controlsHideTimerRef.current);
++    if (settingsOpen) return; // menu open: stays up until it's closed (see effect below)
++    controlsHideTimerRef.current = setTimeout(() => setControlsVisible(false), CONTROLS_HIDE_DELAY_MS);
++  }, [settingsOpen]);
++
++  // Settings menu opening/closing directly drives visibility: force the
++  // bar up (and cancel any pending hide) while the menu is open, then let
++  // wakeControls() restart the normal countdown the instant it closes —
++  // this is what makes the bar finally hide itself right after picking a
++  // playback speed, instead of only then by coincidence.
++  useEffect(() => {
++    wakeControls();
++    return () => {
++      if (controlsHideTimerRef.current) clearTimeout(controlsHideTimerRef.current);
++    };
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [settingsOpen]);
++
++  // Restart the countdown whenever playback starts/stops, so pressing
++  // play (or pause, to jot down a note) always gets a fresh window before
++  // the bar fades — not just mouse/touch movement.
++  useEffect(() => {
++    wakeControls();
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [ytPlaying]);
++
++  // Any real interaction over the player wakes the bar. touchstart/
++  // pointerdown cover phones (no mousemove there); mousemove covers
++  // desktop without requiring :hover.
++  useEffect(() => {
++    const el = containerRef.current;
++    if (!el) return;
++    function onActivity() {
++      wakeControls();
++    }
++    el.addEventListener('mousemove', onActivity);
++    el.addEventListener('pointerdown', onActivity);
++    el.addEventListener('touchstart', onActivity, { passive: true });
++    el.addEventListener('keydown', onActivity);
++    return () => {
++      el.removeEventListener('mousemove', onActivity);
++      el.removeEventListener('pointerdown', onActivity);
++      el.removeEventListener('touchstart', onActivity);
++      el.removeEventListener('keydown', onActivity);
++    };
++  }, [wakeControls]);
++
+   // Reports the current watch position to /api/video/[id]/progress —
+   // fire-and-forget, best-effort (a failed save just means next load
+   // starts from the previous checkpoint instead of the latest one, never
+@@ -830,19 +892,20 @@ export function VideoPlayer({
+           )}
+ 
+           {/* Custom control bar — replaces YouTube's native one entirely
+-              (controls=0 above). Hover-to-reveal on desktop (matches the
+-              requested behavior), but always shown while paused or while
+-              the settings menu is open — paused-visible is also the
+-              practical fallback for touch devices, which have no hover
+-              state at all. Floating glass pill (not edge-to-edge), with a
+-              two-row layout: drag-to-seek track on top, controls below —
+-              same shape as a typical polished HLS player control bar. */}
++              (controls=0 above). Auto-hides after a short idle period via
++              JS (controlsVisible), not CSS :hover — :hover doesn't exist
++              on touch, which used to leave this stuck visible (or stuck
++              hidden) on phones. Any interaction restarts the timer, and
++              it's held up for as long as the settings menu is open.
++              Floating glass pill (not edge-to-edge), with a two-row
++              layout: drag-to-seek track on top, controls below — same
++              shape as a typical polished HLS player control bar. */}
+           <div
+             onClick={(e) => e.stopPropagation()}
+             className={`absolute inset-x-2 sm:inset-x-3 bottom-2 sm:bottom-3 z-30 rounded-2xl border border-white/10 bg-black/50 px-2.5 pb-2 pt-3 shadow-[0_12px_36px_-8px_rgba(0,0,0,0.6)] backdrop-blur-xl transition-all duration-300 sm:px-4 sm:pb-2.5 sm:pt-3.5 ${
+-              !ytPlaying || settingsOpen
++              controlsVisible || settingsOpen
+                 ? 'translate-y-0 opacity-100'
+-                : 'pointer-events-none translate-y-2 opacity-0 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100'
++                : 'pointer-events-none translate-y-2 opacity-0'
+             }`}
+           >
+             {/* Seek track: base (full), buffered (loaded fraction), played
