@@ -4,7 +4,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { uuidSchema } from '@/lib/validation';
 import { canAccessBoard, filterAccessibleBoards } from '@/lib/boardAccess';
-import Image from 'next/image';
+import { RoutineImageViewer } from '@/components/RoutineImageViewer';
 import { BoardsSearchGrid } from '@/components/BoardsSearchGrid';
 import { VideosSearchGrid } from '@/components/VideosSearchGrid';
 import { BoardEbooksGrid } from '@/components/BoardEbooksGrid';
@@ -55,19 +55,34 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
   if (board.board_type === 'routine') {
     return (
       <main className="mx-auto max-w-4xl px-6 py-10">
-        <h1 className="font-display text-2xl font-semibold text-ink">{board.title}</h1>
-        {board.description && (
-          <p className="mt-2 max-w-2xl text-sm text-ink-dim">{board.description}</p>
-        )}
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="font-display text-2xl font-semibold text-ink">{board.title}</h1>
+            {board.description && (
+              <p className="mt-2 max-w-2xl text-sm text-ink-dim">{board.description}</p>
+            )}
+          </div>
+          {board.routine_image_url && (
+            <a
+              href={`/api/routine/${board.id}/download`}
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-signal px-3.5 py-2 text-sm font-medium text-white transition hover:bg-signal-glow"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Download
+            </a>
+          )}
+        </div>
         <div className="relative mt-6 aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass">
           {board.routine_image_url ? (
-            <Image
-              src={board.routine_image_url}
-              alt={board.title}
-              fill
-              sizes="(min-width: 1024px) 896px, 100vw"
-              className="object-contain"
-            />
+            <RoutineImageViewer src={board.routine_image_url} alt={board.title} />
           ) : (
             <div className="flex h-full w-full items-center justify-center">
               <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
