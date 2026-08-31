@@ -15,6 +15,7 @@ type Board = {
   sort_order: number;
   board_type: 'normal' | 'routine';
   routine_image_url: string | null;
+  visibility: 'universal' | 'restricted';
 };
 
 export default function AdminBoardsPage() {
@@ -31,6 +32,7 @@ export default function AdminBoardsPage() {
   const [parentId, setParentId] = useState('');
   const [boardType, setBoardType] = useState<'normal' | 'routine'>('normal');
   const [routineImageUrl, setRoutineImageUrl] = useState('');
+  const [visibility, setVisibility] = useState<'universal' | 'restricted'>('universal');
 
   async function load() {
     setLoading(true);
@@ -85,6 +87,7 @@ export default function AdminBoardsPage() {
         sort_order: 0,
         board_type: boardType,
         routine_image_url: boardType === 'routine' ? routineImageUrl || null : null,
+        visibility,
       }),
     });
     const data = await res.json();
@@ -98,6 +101,7 @@ export default function AdminBoardsPage() {
     setParentId('');
     setBoardType('normal');
     setRoutineImageUrl('');
+    setVisibility('universal');
     load();
   }
 
@@ -172,6 +176,22 @@ export default function AdminBoardsPage() {
             <option value="routine">Routine (just an image)</option>
           </select>
         </Field>
+        <Field label="Visibility">
+          <select
+            value={visibility}
+            onChange={(e) => setVisibility(e.target.value as 'universal' | 'restricted')}
+            className="input"
+          >
+            <option value="universal">Universal — everyone can see it</option>
+            <option value="restricted">Restricted — only selected users</option>
+          </select>
+        </Field>
+        {visibility === 'restricted' && (
+          <p className="sm:col-span-2 text-xs text-ink-faint">
+            Create the board first, then use <strong className="text-ink">Edit</strong> to pick which users can
+            see it.
+          </p>
+        )}
         {boardType === 'routine' && (
           <div className="sm:col-span-2">
             <Field label="Routine image (16:9 — this IS the routine)">
@@ -233,6 +253,12 @@ export default function AdminBoardsPage() {
                       <span className={b.published ? 'text-ok' : 'text-warn'}>
                         {b.published ? 'Published' : 'Draft'}
                       </span>
+                      {b.visibility === 'restricted' && (
+                        <>
+                          {' '}
+                          · <span className="text-signal-glow">Restricted</span>
+                        </>
+                      )}
                     </p>
                   </div>
                 </div>
@@ -325,6 +351,7 @@ function BoardEditPanel({
   const [parentId, setParentId] = useState(board.parent_id ?? '');
   const [boardType, setBoardType] = useState<'normal' | 'routine'>(board.board_type ?? 'normal');
   const [routineImageUrl, setRoutineImageUrl] = useState(board.routine_image_url ?? '');
+  const [visibility, setVisibility] = useState<'universal' | 'restricted'>(board.visibility ?? 'universal');
   const [saving, setSaving] = useState(false);
 
   // A board can never become its own parent, nor be reparented under one
@@ -345,6 +372,7 @@ function BoardEditPanel({
         parent_id: parentId || null,
         board_type: boardType,
         routine_image_url: boardType === 'routine' ? routineImageUrl || null : null,
+        visibility,
       }),
     });
     const data = await res.json();
@@ -388,10 +416,27 @@ function BoardEditPanel({
           <option value="routine">Routine (just an image)</option>
         </select>
       </Field>
+      <Field label="Visibility">
+        <select
+          value={visibility}
+          onChange={(e) => setVisibility(e.target.value as 'universal' | 'restricted')}
+          className="input"
+        >
+          <option value="universal">Universal — everyone can see it</option>
+          <option value="restricted">Restricted — only selected users</option>
+        </select>
+      </Field>
       {boardType === 'routine' && (
         <div className="sm:col-span-2">
           <Field label="Routine image (16:9 — this IS the routine)">
             <ThumbnailUpload value={routineImageUrl} onChange={setRoutineImageUrl} />
+          </Field>
+        </div>
+      )}
+      {visibility === 'restricted' && (
+        <div className="sm:col-span-2">
+          <Field label="Who can see this board (and everything nested under it)">
+            <BoardAccessPicker boardId={board.id} onError={onError} />
           </Field>
         </div>
       )}
@@ -405,6 +450,101 @@ function BoardEditPanel({
         </button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Manages board_user_access for one 'restricted' board — separate from
+ * the main save button above (its own fetch, its own save action)
+ * because the grant list is a different table/endpoint entirely, and
+ * doing it as its own small form avoids losing the rest of the edit
+ * form's state if this call fails independently.
+ */
+function BoardAccessPicker({ boardId, onError }: { boardId: string; onError: (msg: string) => void }) {
+  const [allUsers, setAllUsers] = useState<{ email: string }[]>([]);
+  const [granted, setGranted] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedOnce, setSavedOnce] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const [usersRes, accessRes] = await Promise.all([
+        fetch('/api/admin/users'),
+        fetch(`/api/admin/boards/${boardId}/access`),
+      ]);
+      const usersData = await usersRes.json();
+      const accessData = await accessRes.json();
+      if (cancelled) return;
+      if (usersRes.ok) setAllUsers(usersData.users ?? []);
+      if (accessRes.ok) setGranted(new Set((accessData.emails ?? []) as string[]));
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [boardId]);
+
+  function toggle(email: string) {
+    setGranted((prev) => {
+      const next = new Set(prev);
+      if (next.has(email)) next.delete(email);
+      else next.add(email);
+      return next;
+    });
+    setSavedOnce(false);
+  }
+
+  async function saveAccess() {
+    setSaving(true);
+    const res = await fetch(`/api/admin/boards/${boardId}/access`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emails: Array.from(granted) }),
+    });
+    const data = await res.json();
+    if (!res.ok) onError(data.error ?? 'Could not update access list.');
+    else setSavedOnce(true);
+    setSaving(false);
+  }
+
+  if (loading) return <p className="text-xs text-ink-faint">Loading users…</p>;
+  if (allUsers.length === 0) return <p className="text-xs text-ink-faint">No users to grant access to yet.</p>;
+
+  return (
+    <div>
+      <div className="max-h-48 overflow-y-auto rounded-md border border-vault-border bg-vault-900 p-2">
+        {allUsers.map((u) => (
+          <label
+            key={u.email}
+            className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-ink hover:bg-vault-800/60"
+          >
+            <input
+              type="checkbox"
+              checked={granted.has(u.email)}
+              onChange={() => toggle(u.email)}
+              className="accent-signal"
+            />
+            <span className="truncate">{u.email}</span>
+          </label>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={saveAccess}
+          disabled={saving}
+          className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
+        >
+          {saving ? 'Saving access…' : 'Save access list'}
+        </button>
+        <span className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+          {granted.size} of {allUsers.length} selected{savedOnce ? ' · saved' : ''}
+        </span>
+      </div>
+    </div>
   );
 }
 

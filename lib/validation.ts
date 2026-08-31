@@ -57,6 +57,11 @@ export const boardSchema = z.object({
   // 16:9) alongside the title and description.
   board_type: boardTypeSchema.default('normal'),
   routine_image_url: safeUrl.optional().nullable(),
+  // 'universal' (default) = every authorized user can see this board.
+  // 'restricted' = only users explicitly granted access (see
+  // board_user_access / /api/admin/boards/[id]/access) can see it — and
+  // that restriction cascades to everything nested under it.
+  visibility: z.enum(['universal', 'restricted']).default('universal'),
 });
 
 export const boardUpdateSchema = boardSchema.partial();
@@ -122,3 +127,13 @@ export const eBookUpdateSchema = eBookSchema.partial().extend({
 });
 
 export const uuidSchema = z.string().uuid();
+
+// Reported periodically by VideoPlayer.tsx (both providers) while a class
+// plays, to power "resume where I left off". Capped at ~24h so a client
+// bug (or a tampered request) can't write an absurd value; duration is
+// optional since it isn't always known yet (e.g. YouTube before
+// onReady/getDuration resolves).
+export const videoProgressSchema = z.object({
+  position_seconds: z.number().int().min(0).max(24 * 60 * 60),
+  duration_seconds: z.number().int().min(0).max(24 * 60 * 60).optional().nullable(),
+});

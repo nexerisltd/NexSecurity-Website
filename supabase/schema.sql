@@ -44,11 +44,30 @@ create table if not exists public.boards (
   -- display routine_image_url (a class routine / timetable graphic).
   board_type text not null default 'normal' check (board_type in ('normal', 'routine')),
   routine_image_url text,
+  -- 'universal' = visible to every authorized user (default, unchanged
+  -- behavior). 'restricted' = visible only to users explicitly granted
+  -- access via board_user_access below — and the restriction cascades to
+  -- everything nested under this board, see lib/boardAccess.ts.
+  visibility text not null default 'universal' check (visibility in ('universal', 'restricted')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create index if not exists idx_boards_parent on public.boards (parent_id);
+
+-- ---------------------------------------------------------------------------
+-- 2b. board_user_access — explicit per-user grants for 'restricted' boards.
+-- ---------------------------------------------------------------------------
+create table if not exists public.board_user_access (
+  id uuid primary key default gen_random_uuid(),
+  board_id uuid not null references public.boards (id) on delete cascade,
+  user_email text not null,
+  created_at timestamptz not null default now(),
+  unique (board_id, user_email)
+);
+
+create index if not exists idx_board_user_access_board on public.board_user_access (board_id);
+create index if not exists idx_board_user_access_user on public.board_user_access (lower(user_email));
 
 -- ---------------------------------------------------------------------------
 -- 3. pages — an optional intermediate container a board can point to
@@ -227,6 +246,25 @@ create index if not exists idx_user_devices_user_status on public.user_devices (
 create index if not exists idx_user_devices_device_id on public.user_devices (device_id);
 create index if not exists idx_user_devices_last_seen on public.user_devices (user_id, last_seen desc);
 
+-- ---------------------------------------------------------------------------
+-- 10. video_progress — "resume playback". One row per (user, video)
+--     holding the last watched position, updated periodically by
+--     VideoPlayer.tsx while a class is playing, and read back by
+--     /api/video/[id]/play so reopening a class auto-seeks to where the
+--     student left off. Works for both providers (bunny + youtube).
+-- ---------------------------------------------------------------------------
+create table if not exists public.video_progress (
+  id uuid primary key default gen_random_uuid(),
+  user_email text not null,
+  video_id uuid not null references public.videos (id) on delete cascade,
+  position_seconds integer not null default 0,
+  duration_seconds integer,
+  updated_at timestamptz not null default now(),
+  unique (user_email, video_id)
+);
+
+create index if not exists idx_video_progress_user_video on public.video_progress (lower(user_email), video_id);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ============================================================================
@@ -241,6 +279,8 @@ alter table public.video_playback_tokens enable row level security;
 alter table public.video_resources enable row level security;
 alter table public.e_books enable row level security;
 alter table public.user_devices enable row level security;
+alter table public.video_progress enable row level security;
+alter table public.board_user_access enable row level security;
 
 -- Helper: is the currently authenticated user an ACTIVE authorized user?
 create or replace function public.is_authorized() returns boolean as $$
@@ -348,6 +388,34 @@ create policy playback_tokens_self_select on public.video_playback_tokens
   for select using (
     lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', '')) or public.is_admin()
   );
+
+-- video_progress: a user may only read/write their OWN progress rows.
+-- All access in practice goes through the service-role admin client from
+-- app/api/video/[id]/play and app/api/video/[id]/progress (same pattern
+-- as videos / video_playback_tokens above), but this policy is still the
+-- real backstop if that ever changes.
+drop policy if exists video_progress_self on public.video_progress;
+create policy video_progress_self on public.video_progress
+  for all using (
+    lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', '')) or public.is_admin()
+  )
+  with check (
+    lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', '')) or public.is_admin()
+  );
+
+-- board_user_access: a user may see their OWN grants (needed so
+-- lib/boardAccess.ts's checks work under the normal RLS-bound server
+-- client). Admins can see and manage everything.
+drop policy if exists board_user_access_self_select on public.board_user_access;
+create policy board_user_access_self_select on public.board_user_access
+  for select using (
+    lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', '')) or public.is_admin()
+  );
+
+drop policy if exists board_user_access_admin_write on public.board_user_access;
+create policy board_user_access_admin_write on public.board_user_access
+  for all using (public.is_admin())
+  with check (public.is_admin());
 
 -- ============================================================================
 -- Seed: replace with your own admin email after first deploy, e.g.:

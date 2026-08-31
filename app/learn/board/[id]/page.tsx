@@ -3,6 +3,7 @@ import { getAuth } from '@/lib/auth';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { uuidSchema } from '@/lib/validation';
+import { canAccessBoard, filterAccessibleBoards } from '@/lib/boardAccess';
 import Image from 'next/image';
 import { BoardsSearchGrid } from '@/components/BoardsSearchGrid';
 import { VideosSearchGrid } from '@/components/VideosSearchGrid';
@@ -23,6 +24,8 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
   const boardId = parsedId.data;
 
   const supabase = createSupabaseServerClient();
+  const adminClient = createSupabaseAdminClient();
+  const isAdmin = auth.user.role === 'ADMIN';
 
   // RLS enforces: non-admins only ever see this row if published = true.
   // An unpublished or nonexistent board id returns null either way, so
@@ -37,6 +40,14 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
     .maybeSingle();
 
   if (!board) notFound();
+
+  // "Restricted" board visibility — walks the FULL ancestor chain, so a
+  // user locked out of a parent board can't reach this page directly by
+  // its own URL either, even if this specific board is itself universal.
+  // Same "not found" response as the published-check above, for the same
+  // reason: no way to distinguish "hidden" from "doesn't exist".
+  if (!(await canAccessBoard(adminClient, auth.user.email, boardId, isAdmin))) notFound();
+
 
   // Case 0: a 'routine' board skips the board/video hierarchy entirely —
   // it's just a title, description, and a single 16:9 image (the routine
@@ -79,13 +90,14 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
 
     const { data: pageBoards } = await supabase
       .from('page_boards')
-      .select('sort_order, board:board_id(id, title, description, thumbnail_url, published)')
+      .select('sort_order, board:board_id(id, title, description, thumbnail_url, published, visibility)')
       .eq('page_id', board.destination_page_id)
       .order('sort_order', { ascending: true });
 
-    const children = (pageBoards ?? [])
+    const published = (pageBoards ?? [])
       .map((pb) => pb.board as any)
       .filter((b) => b && b.published);
+    const children = await filterAccessibleBoards(adminClient, auth.user.email, published, isAdmin);
 
     return (
       <BoardListView heading={page?.title ?? board.title} description={page?.description} items={children} />
@@ -93,14 +105,16 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
   }
 
   // Case 2: this board has published child boards.
-  const { data: childBoards } = await supabase
+  const { data: childBoardRows } = await supabase
     .from('boards')
-    .select('id, title, description, thumbnail_url')
+    .select('id, title, description, thumbnail_url, visibility')
     .eq('parent_id', boardId)
     .eq('published', true)
     .order('sort_order', { ascending: true });
 
-  if (childBoards && childBoards.length > 0) {
+  const childBoards = await filterAccessibleBoards(adminClient, auth.user.email, childBoardRows ?? [], isAdmin);
+
+  if (childBoards.length > 0) {
     return <BoardListView heading={board.title} description={board.description} items={childBoards} />;
   }
 
@@ -110,8 +124,9 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
   // videos/e_books tables, and it's done through the admin client
   // specifically because RLS otherwise blocks all non-admin reads of
   // those tables. Authorization has already been fully established above
-  // (authenticated + authorized + board published) before these lookups.
-  const adminClient = createSupabaseAdminClient();
+  // (authenticated + authorized + board published + board visibility)
+  // before these lookups. (adminClient itself was already created above,
+  // for the visibility/access checks.)
   const [{ data: videos }, { data: ebooks }] = await Promise.all([
     adminClient
       .from('videos')

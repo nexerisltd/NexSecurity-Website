@@ -14,7 +14,7 @@ export async function GET() {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from('boards')
-    .select('id, title, description, thumbnail_url, parent_id, sort_order, published, destination_page_id, board_type, routine_image_url, created_at')
+    .select('id, title, description, thumbnail_url, parent_id, sort_order, published, destination_page_id, board_type, routine_image_url, visibility, created_at')
     .order('created_at', { ascending: false });
 
   if (error) return NextResponse.json({ error: 'Something went wrong.' }, { status: 500 });

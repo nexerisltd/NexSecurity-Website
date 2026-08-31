@@ -63,6 +63,9 @@ type YtPlayerInstance = {
   getAvailableQualityLevels: () => string[];
   getPlaybackQuality: () => string;
   setPlaybackQuality: (level: string) => void;
+  getVolume: () => number;
+  setVolume: (volume: number) => void;
+  getVideoLoadedFraction: () => number;
   destroy: () => void;
 };
 
@@ -95,6 +98,13 @@ const SEEK_SECONDS = 10;
 const HOLD_THRESHOLD_MS = 320;
 const HEARTBEAT_MS = 4 * 60 * 1000; // well inside the ~10-minute token expiry
 const YT_TIME_POLL_MS = 400; // YT's API has no timeupdate event, only polling
+const PROGRESS_SAVE_MS = 15 * 1000; // "resume playback" checkpoint cadence
+
+// Shared per-button styling for the custom control bar — a small hit-area
+// with a hover highlight, matching the reference bar's button treatment
+// instead of bare unstyled icons.
+const CTRL_BTN_CLASS =
+  'flex items-center justify-center rounded-lg p-1.5 text-white/90 transition hover:bg-white/10 hover:text-white';
 
 function formatTime(totalSeconds: number): string {
   if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return '0:00';
@@ -110,10 +120,12 @@ export function VideoPlayer({
   videoId,
   initialUrl,
   initialProvider,
+  initialResumeSeconds,
 }: {
   videoId: string;
   initialUrl?: string | null;
   initialProvider?: string | null;
+  initialResumeSeconds?: number | null;
 }) {
   const [url, setUrl] = useState<string | null>(initialUrl ?? null);
   const [provider, setProvider] = useState<string | null>(initialProvider ?? null);
@@ -134,13 +146,31 @@ export function VideoPlayer({
   const holdingFastRef = useRef(false);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // --- "Resume playback": last watched position for this (user, video),
+  // read either from the server-rendered page (initialResumeSeconds) or
+  // from this component's own client-side /play fetch below. Applied
+  // (seeked to) exactly once per mount via resumeAppliedRef — after
+  // that, normal playback/seeking takes over and this is never consulted
+  // again until the page is reloaded. Refs (not just the ytCurrentTime /
+  // Bunny timeupdate state) track the live position so an unload/tab-close
+  // flush always has an up-to-date value to send without waiting on an
+  // async getCurrentTime callback.
+  const [resumeSeconds, setResumeSeconds] = useState<number | null>(initialResumeSeconds ?? null);
+  const resumeAppliedRef = useRef(false);
+  const ytCurrentTimeRef = useRef(0);
+  const ytDurationRef = useRef(0);
+  const bunnyPositionRef = useRef(0);
+  const bunnyDurationRef = useRef(0);
+
   // --- YouTube (IFrame Player API) state ---
   const [ytApiReady, setYtApiReady] = useState(false);
   const [ytPlaying, setYtPlaying] = useState(false);
   const [ytBuffering, setYtBuffering] = useState(true);
   const [ytMuted, setYtMuted] = useState(false);
+  const [ytVolume, setYtVolume] = useState(1);
   const [ytCurrentTime, setYtCurrentTime] = useState(0);
   const [ytDuration, setYtDuration] = useState(0);
+  const [ytBufferedFraction, setYtBufferedFraction] = useState(0);
   const ytMountRef = useRef<HTMLDivElement>(null);
   const ytPlayerRef = useRef<YtPlayerInstance | null>(null);
   const ytSeekingRef = useRef(false);
@@ -152,6 +182,66 @@ export function VideoPlayer({
   const [quality, setQualityState] = useState('auto');
   const [qualityLevels, setQualityLevels] = useState<string[]>([]);
   const settingsRef = useRef<HTMLDivElement>(null);
+
+  // Reports the current watch position to /api/video/[id]/progress —
+  // fire-and-forget, best-effort (a failed save just means next load
+  // starts from the previous checkpoint instead of the latest one, never
+  // blocks or interrupts playback). Uses sendBeacon when available (works
+  // even during page unload/tab close, unlike a normal fetch), falling
+  // back to a keepalive fetch otherwise.
+  const reportProgress = useCallback(
+    (position: number, duration?: number) => {
+      if (!Number.isFinite(position) || position < 0) return;
+      const payload: { position_seconds: number; duration_seconds?: number } = {
+        position_seconds: Math.floor(position),
+      };
+      if (Number.isFinite(duration) && (duration ?? 0) > 0) {
+        payload.duration_seconds = Math.floor(duration as number);
+      }
+      const body = JSON.stringify(payload);
+      try {
+        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+          navigator.sendBeacon(`/api/video/${videoId}/progress`, new Blob([body], { type: 'application/json' }));
+        } else {
+          fetch(`/api/video/${videoId}/progress`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+            keepalive: true,
+          }).catch(() => {});
+        }
+      } catch {
+        // best-effort — a dropped progress report is never worth surfacing
+      }
+    },
+    [videoId]
+  );
+
+  // Flush whichever provider is currently active on tab close/hide —
+  // covers the common case of a student just closing the tab mid-class
+  // without ever hitting pause. Also flushed on unmount for in-app (SPA)
+  // navigation away from the page, which never fires beforeunload/pagehide.
+  useEffect(() => {
+    function flush() {
+      if (isYoutube && ytPlayerRef.current) {
+        reportProgress(ytCurrentTimeRef.current, ytDurationRef.current);
+      } else if (isBunny && playerRef.current) {
+        reportProgress(bunnyPositionRef.current, bunnyDurationRef.current);
+      }
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
+      flush();
+    };
+  }, [isYoutube, isBunny, reportProgress]);
 
   const fetchPlaybackUrl = useCallback(async (): Promise<boolean> => {
     try {
@@ -184,6 +274,7 @@ export function VideoPlayer({
         if (!cancelled) {
           setUrl(data.url);
           setProvider(data.provider ?? null);
+          if (typeof data.resumeSeconds === 'number') setResumeSeconds(data.resumeSeconds);
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Playback unavailable.');
@@ -229,12 +320,49 @@ export function VideoPlayer({
       });
       player.on('pause', () => {
         isPlayingRef.current = false;
+        // Save the moment playback pauses — the most common natural
+        // checkpoint (student steps away, switches tabs, etc).
+        reportProgress(bunnyPositionRef.current, bunnyDurationRef.current);
       });
+      // player.js's Bunny implementation fires this continuously during
+      // playback with { seconds, duration } — used both to keep the refs
+      // above current (for the unload flush) and to drive the periodic
+      // save interval below, without polling getCurrentTime ourselves.
+      player.on('timeupdate', (data: unknown) => {
+        const d = data as { seconds?: number; duration?: number } | undefined;
+        if (typeof d?.seconds === 'number') bunnyPositionRef.current = d.seconds;
+        if (typeof d?.duration === 'number' && d.duration > 0) bunnyDurationRef.current = d.duration;
+      });
+      // Resume playback — apply the saved position exactly once, and
+      // only if it's not trivially close to the start or the very end
+      // (near-end resume would just replay the last few seconds, which
+      // reads as broken rather than helpful).
+      if (!resumeAppliedRef.current && resumeSeconds && resumeSeconds > 5) {
+        resumeAppliedRef.current = true;
+        player.getDuration((duration) => {
+          if (!duration || duration - resumeSeconds > 10) {
+            player.setCurrentTime(resumeSeconds);
+            bunnyPositionRef.current = resumeSeconds;
+          }
+        });
+      }
     });
     return () => {
       playerRef.current = null;
     };
-  }, [isBunny, playerJsReady, url]);
+  }, [isBunny, playerJsReady, url, resumeSeconds, reportProgress]);
+
+  // Periodic progress save while a Bunny class is actually playing —
+  // independent of the timeupdate event's own frequency, so this is a
+  // predictable ~15s cadence regardless of how often player.js fires it.
+  useEffect(() => {
+    if (!isBunny || !url) return;
+    const interval = setInterval(() => {
+      if (!isPlayingRef.current) return;
+      reportProgress(bunnyPositionRef.current, bunnyDurationRef.current);
+    }, PROGRESS_SAVE_MS);
+    return () => clearInterval(interval);
+  }, [isBunny, url, reportProgress]);
 
   // --- YouTube: load the IFrame Player API script once, globally ---
   useEffect(() => {
@@ -290,18 +418,38 @@ export function VideoPlayer({
       events: {
         onReady: (e) => {
           ytPlayerRef.current = e.target;
-          setYtDuration(e.target.getDuration());
+          const duration = e.target.getDuration();
+          setYtDuration(duration);
+          ytDurationRef.current = duration;
           setYtMuted(e.target.isMuted());
+          setYtVolume((e.target.getVolume?.() ?? 100) / 100);
           setYtBuffering(false);
           setQualityLevels(e.target.getAvailableQualityLevels?.() ?? []);
           setQualityState(e.target.getPlaybackQuality?.() ?? 'auto');
           setSpeedState(e.target.getPlaybackRate?.() ?? 1);
+          // Resume playback — same "not trivially close to start or end"
+          // rule as the Bunny path above, applied exactly once per mount.
+          if (!resumeAppliedRef.current && resumeSeconds && resumeSeconds > 5) {
+            resumeAppliedRef.current = true;
+            if (!duration || duration - resumeSeconds > 10) {
+              e.target.seekTo(resumeSeconds, true);
+              setYtCurrentTime(resumeSeconds);
+              ytCurrentTimeRef.current = resumeSeconds;
+            }
+          }
         },
         onStateChange: (e) => {
           setYtPlaying(e.data === window.YT?.PlayerState.PLAYING);
           setYtBuffering(e.data === window.YT?.PlayerState.BUFFERING);
           if (e.data === window.YT?.PlayerState.PLAYING) {
-            setYtDuration(e.target.getDuration());
+            const duration = e.target.getDuration();
+            setYtDuration(duration);
+            ytDurationRef.current = duration;
+          }
+          // Save the moment playback pauses or ends — same reasoning as
+          // the Bunny 'pause' handler above.
+          if (e.data === window.YT?.PlayerState.PAUSED || e.data === window.YT?.PlayerState.ENDED) {
+            reportProgress(ytCurrentTimeRef.current, ytDurationRef.current);
           }
         },
       },
@@ -311,7 +459,7 @@ export function VideoPlayer({
       player.destroy?.();
       ytPlayerRef.current = null;
     };
-  }, [isYoutube, ytApiReady, url]);
+  }, [isYoutube, ytApiReady, url, resumeSeconds, reportProgress]);
 
   // --- YouTube: poll current time while playing to drive the seek bar.
   // There's no push-based "timeupdate" event in this API — polling is
@@ -322,7 +470,11 @@ export function VideoPlayer({
       if (ytSeekingRef.current) return; // don't fight an in-progress drag
       const yp = ytPlayerRef.current;
       if (!yp) return;
-      setYtCurrentTime(yp.getCurrentTime());
+      const t = yp.getCurrentTime();
+      setYtCurrentTime(t);
+      ytCurrentTimeRef.current = t;
+      const buffered = yp.getVideoLoadedFraction?.();
+      if (typeof buffered === 'number') setYtBufferedFraction(buffered);
       // Also re-read the real playback quality — YouTube can silently
       // switch this on its own (bandwidth changes, or just overriding a
       // manual selection), so this keeps the settings menu honest instead
@@ -332,6 +484,16 @@ export function VideoPlayer({
     }, YT_TIME_POLL_MS);
     return () => clearInterval(interval);
   }, [isYoutube, ytPlaying]);
+
+  // Periodic "resume playback" checkpoint while a YouTube class is
+  // actually playing — same cadence/purpose as the Bunny interval above.
+  useEffect(() => {
+    if (!isYoutube || !ytPlaying) return;
+    const interval = setInterval(() => {
+      reportProgress(ytCurrentTimeRef.current, ytDurationRef.current);
+    }, PROGRESS_SAVE_MS);
+    return () => clearInterval(interval);
+  }, [isYoutube, ytPlaying, reportProgress]);
 
   function showHint(text: string) {
     setHint(text);
@@ -468,6 +630,21 @@ export function VideoPlayer({
     }
   }
 
+  function changeVolume(value: number) {
+    const yp = ytPlayerRef.current;
+    if (!yp) return;
+    const clamped = Math.min(1, Math.max(0, value));
+    yp.setVolume(clamped * 100);
+    setYtVolume(clamped);
+    if (clamped === 0) {
+      if (!yp.isMuted()) yp.mute();
+      setYtMuted(true);
+    } else if (yp.isMuted()) {
+      yp.unMute();
+      setYtMuted(false);
+    }
+  }
+
   function onSeekBarChange(value: number) {
     ytSeekingRef.current = true;
     setYtCurrentTime(value);
@@ -482,6 +659,31 @@ export function VideoPlayer({
     setTimeout(() => {
       ytSeekingRef.current = false;
     }, 300);
+  }
+
+  // Drag-to-seek on the custom track below (a plain <input type=range>
+  // can't easily grow a buffered-bar + hover-thumb visual across
+  // browsers, so this is a bare div + pointer events instead).
+  function handleSeekPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    const track = e.currentTarget;
+    const duration = ytDuration || 0;
+    if (!duration) return;
+    ytSeekingRef.current = true;
+    const ratioFromEvent = (clientX: number) => {
+      const rect = track.getBoundingClientRect();
+      return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    };
+    onSeekBarChange(ratioFromEvent(e.clientX) * duration);
+    track.setPointerCapture(e.pointerId);
+    const onMove = (ev: PointerEvent) => onSeekBarChange(ratioFromEvent(ev.clientX) * duration);
+    const onUp = (ev: PointerEvent) => {
+      commitSeekBar(ratioFromEvent(ev.clientX) * duration);
+      track.releasePointerCapture(ev.pointerId);
+      track.removeEventListener('pointermove', onMove);
+      track.removeEventListener('pointerup', onUp);
+    };
+    track.addEventListener('pointermove', onMove);
+    track.addEventListener('pointerup', onUp);
   }
 
   useEffect(() => {
@@ -632,117 +834,150 @@ export function VideoPlayer({
               requested behavior), but always shown while paused or while
               the settings menu is open — paused-visible is also the
               practical fallback for touch devices, which have no hover
-              state at all. */}
+              state at all. Floating glass pill (not edge-to-edge), with a
+              two-row layout: drag-to-seek track on top, controls below —
+              same shape as a typical polished HLS player control bar. */}
           <div
             onClick={(e) => e.stopPropagation()}
-            className={`absolute inset-x-0 bottom-0 flex items-center gap-3 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-3 pb-2.5 pt-8 backdrop-blur-[2px] transition-opacity duration-200 ${
+            className={`absolute inset-x-2 sm:inset-x-3 bottom-2 sm:bottom-3 z-30 rounded-2xl border border-white/10 bg-black/50 px-2.5 pb-2 pt-3 shadow-[0_12px_36px_-8px_rgba(0,0,0,0.6)] backdrop-blur-xl transition-all duration-300 sm:px-4 sm:pb-2.5 sm:pt-3.5 ${
               !ytPlaying || settingsOpen
-                ? 'opacity-100'
-                : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
+                ? 'translate-y-0 opacity-100'
+                : 'pointer-events-none translate-y-2 opacity-0 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100'
             }`}
           >
-            <button onClick={togglePlayPause} aria-label={ytPlaying ? 'Pause' : 'Play'} className="text-white">
-              {ytPlaying ? (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="5" width="4" height="14" rx="1" />
-                  <rect x="14" y="5" width="4" height="14" rx="1" />
-                </svg>
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8 5.5v13l11-6.5-11-6.5Z" />
-                </svg>
-              )}
-            </button>
-
-            <button onClick={() => seek(-SEEK_SECONDS)} aria-label="Back 10 seconds" className="text-white">
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M6 12a8 8 0 1 1 2.4 5.7M6 12v5M6 12H1"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <text x="12" y="15" fontSize="7" fill="currentColor" textAnchor="middle" fontFamily="monospace">
-                  10
-                </text>
-              </svg>
-            </button>
-
-            <button onClick={() => seek(SEEK_SECONDS)} aria-label="Forward 10 seconds" className="text-white">
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M18 12a8 8 0 1 0-2.4 5.7M18 12v5M18 12h5"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <text x="12" y="15" fontSize="7" fill="currentColor" textAnchor="middle" fontFamily="monospace">
-                  10
-                </text>
-              </svg>
-            </button>
-
-            <span className="font-mono text-[10px] text-white/80">{formatTime(ytCurrentTime)}</span>
-
-            <input
-              type="range"
-              min={0}
-              max={ytDuration || 0}
-              step={0.1}
-              value={ytCurrentTime}
-              onChange={(e) => onSeekBarChange(Number(e.target.value))}
-              onMouseDown={() => (ytSeekingRef.current = true)}
-              onTouchStart={() => (ytSeekingRef.current = true)}
-              onMouseUp={(e) => commitSeekBar(Number((e.target as HTMLInputElement).value))}
-              onTouchEnd={(e) => commitSeekBar(Number((e.target as HTMLInputElement).value))}
-              className="h-1 flex-1 cursor-pointer accent-signal"
+            {/* Seek track: base (full), buffered (loaded fraction), played
+                (current position), and a thumb that only appears on hover
+                — same visual language as the reference control bar. */}
+            <div
+              onPointerDown={handleSeekPointerDown}
+              role="slider"
               aria-label="Seek"
-            />
+              aria-valuemin={0}
+              aria-valuemax={ytDuration || 0}
+              aria-valuenow={ytCurrentTime}
+              className="group/seek relative mb-2.5 flex h-1.5 w-full cursor-pointer items-center transition-all duration-150 hover:h-2"
+            >
+              <div className="absolute left-0 right-0 h-full rounded-full bg-white/20" />
+              <div
+                className="absolute left-0 h-full rounded-full bg-white/35"
+                style={{ width: `${Math.min(100, ytBufferedFraction * 100)}%` }}
+              />
+              <div
+                className="absolute left-0 h-full rounded-full bg-gradient-to-r from-signal to-signal/70 shadow-[0_0_10px_-1px] shadow-signal/70"
+                style={{ width: `${ytDuration ? Math.min(100, (ytCurrentTime / ytDuration) * 100) : 0}%` }}
+              />
+              <div
+                className="absolute -ml-1.5 h-3 w-3 scale-75 rounded-full bg-white opacity-0 shadow-[0_2px_8px_rgba(0,0,0,0.5)] ring-2 ring-signal transition-all duration-150 group-hover/seek:scale-100 group-hover/seek:opacity-100 group-hover/seek:h-4 group-hover/seek:w-4"
+                style={{ left: `${ytDuration ? Math.min(100, (ytCurrentTime / ytDuration) * 100) : 0}%` }}
+              />
+            </div>
 
-            <span className="font-mono text-[10px] text-white/80">{formatTime(ytDuration)}</span>
+            <div className="flex items-center gap-1 sm:gap-1.5 text-white">
+              <button onClick={togglePlayPause} aria-label={ytPlaying ? 'Pause' : 'Play'} className={CTRL_BTN_CLASS}>
+                {ytPlaying ? (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="5" width="4" height="14" rx="1" />
+                    <rect x="14" y="5" width="4" height="14" rx="1" />
+                  </svg>
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5.5v13l11-6.5-11-6.5Z" />
+                  </svg>
+                )}
+              </button>
 
-            <button onClick={toggleMute} aria-label={ytMuted ? 'Unmute' : 'Mute'} className="text-white">
-              {ytMuted ? (
+              <button onClick={() => seek(-SEEK_SECONDS)} aria-label="Back 10 seconds" className={CTRL_BTN_CLASS}>
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
-                  <path d="M4 9v6h4l5 4V5L8 9H4Z" fill="currentColor" />
-                  <path d="m16 9 4 6M20 9l-4 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                </svg>
-              ) : (
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
-                  <path d="M4 9v6h4l5 4V5L8 9H4Z" fill="currentColor" />
                   <path
-                    d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"
+                    d="M6 12a8 8 0 1 1 2.4 5.7M6 12v5M6 12H1"
                     stroke="currentColor"
                     strokeWidth="1.8"
                     strokeLinecap="round"
-                  />
-                </svg>
-              )}
-            </button>
-
-            <div ref={settingsRef} className="relative">
-              <button
-                onClick={() => {
-                  setSettingsOpen((v) => !v);
-                  setSettingsPanel('main');
-                }}
-                aria-label="Settings"
-                className="text-white"
-              >
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="m19.4 13-.1-1-.1-1 1.6-1.3-2-3.4-2 .6-1.7-1-.3-2h-4l-.3 2-1.7 1-2-.6-2 3.4L6.3 11l-.1 1 .1 1-1.6 1.3 2 3.4 2-.6 1.7 1 .3 2h4l.3-2 1.7-1 2 .6 2-3.4L19.4 13Z"
-                    stroke="currentColor"
-                    strokeWidth="1.4"
                     strokeLinejoin="round"
                   />
-                  <circle cx="12" cy="12" r="2.6" stroke="currentColor" strokeWidth="1.4" />
+                  <text x="12" y="15" fontSize="7" fill="currentColor" textAnchor="middle" fontFamily="monospace">
+                    10
+                  </text>
                 </svg>
               </button>
 
-              {settingsOpen && (
+              <button onClick={() => seek(SEEK_SECONDS)} aria-label="Forward 10 seconds" className={CTRL_BTN_CLASS}>
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M18 12a8 8 0 1 0-2.4 5.7M18 12v5M18 12h5"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <text x="12" y="15" fontSize="7" fill="currentColor" textAnchor="middle" fontFamily="monospace">
+                    10
+                  </text>
+                </svg>
+              </button>
+
+              {/* Volume: icon + a slider that only widens on hover (desktop) —
+                  collapsed to just the mute toggle on touch/narrow screens,
+                  same as the reference bar hiding it below sm. */}
+              <div className="group/vol hidden items-center gap-1 sm:flex">
+                <button onClick={toggleMute} aria-label={ytMuted ? 'Unmute' : 'Mute'} className={CTRL_BTN_CLASS}>
+                  {ytMuted || ytVolume === 0 ? (
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                      <path d="M4 9v6h4l5 4V5L8 9H4Z" fill="currentColor" />
+                      <path d="m16 9 4 6M20 9l-4 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                    </svg>
+                  ) : (
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                      <path d="M4 9v6h4l5 4V5L8 9H4Z" fill="currentColor" />
+                      <path
+                        d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  )}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={ytMuted ? 0 : ytVolume}
+                  onChange={(e) => changeVolume(Number(e.target.value))}
+                  aria-label="Volume"
+                  className="w-0 cursor-pointer overflow-hidden accent-signal transition-[width] duration-200 group-hover/vol:w-16"
+                />
+              </div>
+
+              <span className="ml-1 whitespace-nowrap text-xs font-semibold tabular-nums text-white/95 sm:text-sm">
+                {formatTime(ytCurrentTime)} <span className="font-normal text-white/50">/</span>{' '}
+                {formatTime(ytDuration)}
+              </span>
+
+              <div className="flex-1" />
+
+              <div ref={settingsRef} className="relative">
+                <button
+                  onClick={() => {
+                    setSettingsOpen((v) => !v);
+                    setSettingsPanel('main');
+                  }}
+                  aria-label="Settings"
+                  className={CTRL_BTN_CLASS}
+                >
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="m19.4 13-.1-1-.1-1 1.6-1.3-2-3.4-2 .6-1.7-1-.3-2h-4l-.3 2-1.7 1-2-.6-2 3.4L6.3 11l-.1 1 .1 1-1.6 1.3 2 3.4 2-.6 1.7 1 .3 2h4l.3-2 1.7-1 2 .6 2-3.4L19.4 13Z"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinejoin="round"
+                    />
+                    <circle cx="12" cy="12" r="2.6" stroke="currentColor" strokeWidth="1.4" />
+                  </svg>
+                </button>
+
+                {settingsOpen && (
                 <div className="absolute bottom-8 right-0 z-20 w-48 overflow-hidden rounded-2xl border border-white/10 bg-black/75 py-1.5 text-xs text-white shadow-2xl backdrop-blur-2xl">
                   {settingsPanel === 'main' && (
                     <>
@@ -868,7 +1103,7 @@ export function VideoPlayer({
               )}
             </div>
 
-            <button onClick={toggleFullscreen} aria-label="Fullscreen" className="text-white">
+            <button onClick={toggleFullscreen} aria-label="Fullscreen" className={CTRL_BTN_CLASS}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                 <path
                   d="M9 4H5a1 1 0 0 0-1 1v4M15 4h4a1 1 0 0 1 1 1v4M9 20H5a1 1 0 0 1-1-1v-4M15 20h4a1 1 0 0 0 1-1v-4"
@@ -879,6 +1114,7 @@ export function VideoPlayer({
                 />
               </svg>
             </button>
+            </div>
           </div>
         </>
       )}

@@ -7,6 +7,7 @@ import { uuidSchema } from '@/lib/validation';
 import { buildBunnyEmbedUrl } from '@/lib/bunny';
 import { buildYoutubeEmbedUrl } from '@/lib/youtube';
 import { logAuditEvent } from '@/lib/audit';
+import { canAccessBoard } from '@/lib/boardAccess';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import { PartsList } from '@/components/PartsList';
 
@@ -50,6 +51,15 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
 
   if (!video || !board || !board.published) notFound();
 
+  // "Restricted" board visibility — same cascading ancestor-chain check
+  // as app/learn/board/[id]/page.tsx. A video's own board might be
+  // 'universal', but if any ancestor above it is 'restricted' and this
+  // user has no grant for that ancestor, the video is just as locked as
+  // the board listing page itself.
+  if (!(await canAccessBoard(adminClient, auth.user.email, board.id, auth.user.role === 'ADMIN'))) {
+    notFound();
+  }
+
   let initialPlaybackUrl: string | null = null;
   if (video.provider === 'bunny') {
     const [libraryId, bunnyVideoId] = video.source_ref.split('/');
@@ -68,6 +78,22 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
   // initialPlaybackUrl stays null and VideoPlayer falls back to its own
   // client-side fetch to /play, which surfaces the real error message —
   // no error-handling logic duplicated here.
+
+  // "Resume playback" — same lookup /api/video/[id]/play does on a
+  // client-side load; done here too so the very first server-rendered
+  // paint already knows where to seek, instead of a flash-then-jump once
+  // hydration catches up. Best-effort: null on any lookup issue just
+  // means "start from 0:00", same as a first-time watch.
+  let initialResumeSeconds: number | null = null;
+  const { data: progress } = await adminClient
+    .from('video_progress')
+    .select('position_seconds')
+    .eq('user_email', auth.email)
+    .eq('video_id', videoId)
+    .maybeSingle();
+  if (progress?.position_seconds && progress.position_seconds > 5) {
+    initialResumeSeconds = progress.position_seconds;
+  }
 
   const resources = (video.video_resources ?? []).sort(
     (a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order
@@ -137,7 +163,12 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
 
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_340px]">
           <div className="min-w-0">
-            <VideoPlayer videoId={video.id} initialUrl={initialPlaybackUrl} initialProvider={video.provider} />
+            <VideoPlayer
+              videoId={video.id}
+              initialUrl={initialPlaybackUrl}
+              initialProvider={video.provider}
+              initialResumeSeconds={initialResumeSeconds}
+            />
 
             <div className="mt-6 flex flex-wrap items-start justify-between gap-3">
               <h1 className="font-display text-xl font-semibold text-ink">{video.title}</h1>

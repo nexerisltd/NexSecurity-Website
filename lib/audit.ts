@@ -13,6 +13,7 @@ export type AuditEventType =
   | 'BOARD_CREATED'
   | 'BOARD_UPDATED'
   | 'BOARD_DELETED'
+  | 'BOARD_ACCESS_UPDATED'
   | 'VIDEO_ACCESS_GRANTED'
   | 'VIDEO_ACCESS_DENIED';
 

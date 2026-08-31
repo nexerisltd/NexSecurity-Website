@@ -6,6 +6,7 @@ import { checkRateLimit } from '@/lib/rateLimit';
 import { logAuditEvent } from '@/lib/audit';
 import { buildBunnyEmbedUrl } from '@/lib/bunny';
 import { buildYoutubeEmbedUrl } from '@/lib/youtube';
+import { canAccessBoard } from '@/lib/boardAccess';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,6 +47,16 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
   }
 
+  // "Restricted" board visibility — same cascading ancestor-chain check
+  // as the /learn pages. This route is the actual source of the playable
+  // URL, so it's the check that matters most: a locked-out user can't
+  // get a working embed just by knowing/guessing a video id, even if
+  // they never render the board or video page at all.
+  if (!(await canAccessBoard(adminClient, auth.user.email, board.id, auth.user.role === 'ADMIN'))) {
+    await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, { reason: 'board_restricted' });
+    return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
+  }
+
   if (video.provider !== 'bunny' && video.provider !== 'youtube') {
     await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, {
       reason: 'unsupported_provider',
@@ -71,5 +82,21 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
   await logAuditEvent('VIDEO_ACCESS_GRANTED', auth.user.email, videoId);
 
-  return NextResponse.json({ url, provider: video.provider });
+  // "Resume playback" — best-effort, never blocks/fails the response if
+  // this lookup errors for any reason. Only meaningful on the very first
+  // load; VideoPlayer.tsx's periodic heartbeat re-check also hits this
+  // route but deliberately ignores this field so an already-playing
+  // video is never re-seeked mid-session.
+  let resumeSeconds: number | null = null;
+  const { data: progress } = await adminClient
+    .from('video_progress')
+    .select('position_seconds')
+    .eq('user_email', auth.user.email)
+    .eq('video_id', videoId)
+    .maybeSingle();
+  if (progress?.position_seconds && progress.position_seconds > 5) {
+    resumeSeconds = progress.position_seconds;
+  }
+
+  return NextResponse.json({ url, provider: video.provider, resumeSeconds });
 }
