@@ -8,6 +8,15 @@
 // not a bug in the player — exactly what happened when YouTube support
 // was first added and this line wasn't updated alongside it.
 //
+// media-src additionally allows any https origin: the 'mp4' provider
+// (components/VideoPlayer.tsx) plays a plain <video src> pointed at
+// whatever URL an admin pasted in — Bunny/Supabase storage today, but
+// potentially any host tomorrow — so this can't be a fixed allowlist the
+// way frame-src is. It's the same trade-off img-src already makes below
+// for thumbnails. Nothing here weakens frame-src/script-src: this only
+// widens which origins a <video>/<audio> element may fetch bytes from,
+// never which origins may run script or be embedded as a page.
+//
 // script-src additionally allows www.youtube.com and s.ytimg.com:
 // components/VideoPlayer.tsx loads YouTube's official IFrame Player API
 // script from there to build a fully custom control bar (see the long
@@ -30,7 +39,7 @@ const ContentSecurityPolicy = `
   img-src 'self' data: blob: https:;
   font-src 'self' data:;
   connect-src 'self' https://*.supabase.co wss://*.supabase.co${isDev ? ' ws://localhost:*' : ''};
-  media-src 'self' https://*.supabase.co blob:;
+  media-src 'self' https: blob:;
   frame-src 'self' https://iframe.mediadelivery.net https://www.youtube-nocookie.com;
   frame-ancestors 'none';
   base-uri 'self';

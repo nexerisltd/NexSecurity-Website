@@ -136,6 +136,7 @@ export function VideoPlayer({
   const [hint, setHint] = useState<string | null>(null);
   const isBunny = provider === 'bunny';
   const isYoutube = provider === 'youtube';
+  const isMp4 = provider === 'mp4';
 
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -179,6 +180,14 @@ export function VideoPlayer({
   const ytMountRef = useRef<HTMLDivElement>(null);
   const ytPlayerRef = useRef<YtPlayerInstance | null>(null);
   const ytSeekingRef = useRef(false);
+
+  // --- Direct MP4 (native <video>) state ---
+  // Reuses the same yt* state above the custom control bar already reads
+  // from — this component was written so those represent "custom-bar
+  // media state" generically, fed either by YouTube's IFrame API (above)
+  // or by native <video> events (see the effect below), never both at
+  // once. Only the source element and how it's driven differ.
+  const mp4VideoRef = useRef<HTMLVideoElement>(null);
 
   // --- Settings menu (gear icon): Speed + Quality submenus ---
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -292,6 +301,8 @@ export function VideoPlayer({
     function flush() {
       if (isYoutube && ytPlayerRef.current) {
         reportProgress(ytCurrentTimeRef.current, ytDurationRef.current);
+      } else if (isMp4 && mp4VideoRef.current) {
+        reportProgress(ytCurrentTimeRef.current, ytDurationRef.current);
       } else if (isBunny && playerRef.current) {
         reportProgress(bunnyPositionRef.current, bunnyDurationRef.current);
       }
@@ -308,7 +319,7 @@ export function VideoPlayer({
       window.removeEventListener('beforeunload', flush);
       flush();
     };
-  }, [isYoutube, isBunny, reportProgress]);
+  }, [isYoutube, isBunny, isMp4, reportProgress]);
 
   const fetchPlaybackUrl = useCallback(async (): Promise<boolean> => {
     try {
@@ -370,6 +381,7 @@ export function VideoPlayer({
         setUrl(null);
         ytPlayerRef.current?.destroy();
         ytPlayerRef.current = null;
+        mp4VideoRef.current?.pause();
       }
     }, HEARTBEAT_MS);
     return () => clearInterval(interval);
@@ -555,12 +567,107 @@ export function VideoPlayer({
   // Periodic "resume playback" checkpoint while a YouTube class is
   // actually playing — same cadence/purpose as the Bunny interval above.
   useEffect(() => {
-    if (!isYoutube || !ytPlaying) return;
+    if (!(isYoutube || isMp4) || !ytPlaying) return;
     const interval = setInterval(() => {
       reportProgress(ytCurrentTimeRef.current, ytDurationRef.current);
     }, PROGRESS_SAVE_MS);
     return () => clearInterval(interval);
-  }, [isYoutube, ytPlaying, reportProgress]);
+  }, [isYoutube, isMp4, ytPlaying, reportProgress]);
+
+  // --- Direct MP4: wire native <video> events into the same media state
+  // the custom control bar reads (see the comment by mp4VideoRef above).
+  // No polling needed here — timeupdate/progress/waiting/playing are all
+  // real push events, unlike the YouTube IFrame API above.
+  useEffect(() => {
+    if (!isMp4 || !url) return;
+    const v = mp4VideoRef.current;
+    if (!v) return;
+
+    function onLoadedMetadata() {
+      const duration = v!.duration || 0;
+      ytDurationRef.current = duration;
+      setYtDuration(duration);
+      setYtMuted(v!.muted);
+      setYtVolume(v!.volume);
+      // Resume playback — same "not trivially close to start or end" rule
+      // as the Bunny/YouTube paths above, applied exactly once per mount.
+      if (!resumeAppliedRef.current && resumeSeconds && resumeSeconds > 5) {
+        resumeAppliedRef.current = true;
+        if (!duration || duration - resumeSeconds > 10) {
+          v!.currentTime = resumeSeconds;
+          ytCurrentTimeRef.current = resumeSeconds;
+          setYtCurrentTime(resumeSeconds);
+        }
+      }
+    }
+    function onTimeUpdate() {
+      if (ytSeekingRef.current) return; // don't fight an in-progress drag
+      const t = v!.currentTime;
+      ytCurrentTimeRef.current = t;
+      setYtCurrentTime(t);
+    }
+    function onProgress() {
+      const duration = v!.duration || 0;
+      if (!duration || v!.buffered.length === 0) return;
+      const end = v!.buffered.end(v!.buffered.length - 1);
+      setYtBufferedFraction(Math.min(1, end / duration));
+    }
+    function onPlay() {
+      setYtPlaying(true);
+    }
+    function onPause() {
+      setYtPlaying(false);
+      // Save the moment playback pauses — same reasoning as the Bunny
+      // 'pause' handler above.
+      reportProgress(v!.currentTime, v!.duration);
+    }
+    function onWaiting() {
+      setYtBuffering(true);
+    }
+    function onPlaying() {
+      setYtBuffering(false);
+    }
+    function onVolumeChange() {
+      setYtMuted(v!.muted);
+      setYtVolume(v!.volume);
+    }
+    function onEnded() {
+      reportProgress(v!.duration, v!.duration);
+    }
+    // A genuine load failure (CSP block, source down, unsupported
+    // format, the host's link expired, etc.) — without this, the element
+    // just silently stops, buffering never resolves, and the UI is stuck
+    // on "Loading…" forever with no signal to the student or the admin
+    // about what actually went wrong.
+    function onError() {
+      setYtBuffering(false);
+      setError('This video failed to load. The source link may be broken or expired.');
+    }
+
+    v.addEventListener('loadedmetadata', onLoadedMetadata);
+    v.addEventListener('timeupdate', onTimeUpdate);
+    v.addEventListener('progress', onProgress);
+    v.addEventListener('play', onPlay);
+    v.addEventListener('pause', onPause);
+    v.addEventListener('waiting', onWaiting);
+    v.addEventListener('playing', onPlaying);
+    v.addEventListener('volumechange', onVolumeChange);
+    v.addEventListener('ended', onEnded);
+    v.addEventListener('error', onError);
+    return () => {
+      v.removeEventListener('loadedmetadata', onLoadedMetadata);
+      v.removeEventListener('timeupdate', onTimeUpdate);
+      v.removeEventListener('progress', onProgress);
+      v.removeEventListener('play', onPlay);
+      v.removeEventListener('pause', onPause);
+      v.removeEventListener('waiting', onWaiting);
+      v.removeEventListener('playing', onPlaying);
+      v.removeEventListener('volumechange', onVolumeChange);
+      v.removeEventListener('ended', onEnded);
+      v.removeEventListener('error', onError);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMp4, url]);
 
   function showHint(text: string) {
     setHint(text);
@@ -574,6 +681,12 @@ export function VideoPlayer({
       if (!yp) return;
       const next = Math.max(0, yp.getCurrentTime() + deltaSeconds);
       yp.seekTo(next, true);
+      setYtCurrentTime(next);
+    } else if (isMp4) {
+      const v = mp4VideoRef.current;
+      if (!v) return;
+      const next = Math.max(0, v.currentTime + deltaSeconds);
+      v.currentTime = next;
       setYtCurrentTime(next);
     } else {
       const player = playerRef.current;
@@ -634,6 +747,19 @@ export function VideoPlayer({
       }
       return;
     }
+    if (isMp4) {
+      const v = mp4VideoRef.current;
+      if (!v) return;
+      // .play() returns a promise that can reject for reasons that don't
+      // need a visible error — e.g. a play() immediately followed by a
+      // pause() (AbortError), which is exactly what a fast double-tap or
+      // the hold-to-2x release path can trigger. A genuine failure (CSP
+      // block, unsupported source, network error) still shows up via the
+      // `error` event → onVideoError below, so it's never silently lost.
+      if (v.paused) v.play().catch(() => {});
+      else v.pause();
+      return;
+    }
     const player = playerRef.current;
     if (!player) return;
     if (isPlayingRef.current) {
@@ -645,7 +771,9 @@ export function VideoPlayer({
 
   function setPlaybackRateNow(rate: number) {
     if (isYoutube) ytPlayerRef.current?.setPlaybackRate(rate);
-    else playerRef.current?.setPlaybackRate?.(rate);
+    else if (isMp4) {
+      if (mp4VideoRef.current) mp4VideoRef.current.playbackRate = rate;
+    } else playerRef.current?.setPlaybackRate?.(rate);
   }
 
   // Press-and-hold anywhere on the video: past HOLD_THRESHOLD_MS it jumps
@@ -700,7 +828,7 @@ export function VideoPlayer({
   }, [settingsOpen]);
 
   function changeSpeed(rate: number) {
-    ytPlayerRef.current?.setPlaybackRate(rate);
+    setPlaybackRateNow(rate);
     setSpeedState(rate);
     setSettingsOpen(false);
     setSettingsPanel('main');
@@ -724,6 +852,13 @@ export function VideoPlayer({
   }
 
   function toggleMute() {
+    if (isMp4) {
+      const v = mp4VideoRef.current;
+      if (!v) return;
+      v.muted = !v.muted;
+      setYtMuted(v.muted);
+      return;
+    }
     const yp = ytPlayerRef.current;
     if (!yp) return;
     if (yp.isMuted()) {
@@ -736,9 +871,18 @@ export function VideoPlayer({
   }
 
   function changeVolume(value: number) {
+    const clamped = Math.min(1, Math.max(0, value));
+    if (isMp4) {
+      const v = mp4VideoRef.current;
+      if (!v) return;
+      v.volume = clamped;
+      setYtVolume(clamped);
+      v.muted = clamped === 0;
+      setYtMuted(clamped === 0);
+      return;
+    }
     const yp = ytPlayerRef.current;
     if (!yp) return;
-    const clamped = Math.min(1, Math.max(0, value));
     yp.setVolume(clamped * 100);
     setYtVolume(clamped);
     if (clamped === 0) {
@@ -756,7 +900,11 @@ export function VideoPlayer({
   }
 
   function commitSeekBar(value: number) {
-    ytPlayerRef.current?.seekTo(value, true);
+    if (isMp4) {
+      if (mp4VideoRef.current) mp4VideoRef.current.currentTime = value;
+    } else {
+      ytPlayerRef.current?.seekTo(value, true);
+    }
     setYtCurrentTime(value);
     // Small delay before resuming the poll-driven sync, so the just-set
     // value doesn't get immediately overwritten by a still-in-flight
@@ -800,7 +948,7 @@ export function VideoPlayer({
     }
 
     function onKeyDown(e: KeyboardEvent) {
-      const hasPlayer = isYoutube ? !!ytPlayerRef.current : !!playerRef.current;
+      const hasPlayer = isYoutube ? !!ytPlayerRef.current : isMp4 ? !!mp4VideoRef.current : !!playerRef.current;
       if (isTypingTarget(e.target) || !hasPlayer) return;
 
       if (e.code === 'ArrowRight') {
@@ -850,7 +998,7 @@ export function VideoPlayer({
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isYoutube]);
+  }, [isYoutube, isMp4]);
 
   return (
     <div ref={containerRef} className="group relative aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-800">
@@ -902,22 +1050,45 @@ export function VideoPlayer({
         />
       )}
 
-      {isYoutube && url && !loading && !error && !revoked && (
+      {(isYoutube || isMp4) && url && !loading && !error && !revoked && (
         <>
-          {/* YT.Player takes this div over and injects its own iframe —
-              no other React children ever go inside it. Press-and-hold
-              here jumps to 2× (see handleVideoPointerDown); a normal
-              tap/click still toggles play/pause. */}
-          <div
-            className="absolute inset-0"
-            onClick={handleVideoClick}
-            onPointerDown={handleVideoPointerDown}
-            onPointerUp={endVideoHold}
-            onPointerCancel={endVideoHold}
-            onPointerLeave={endVideoHold}
-          >
-            <div ref={ytMountRef} className="pointer-events-none h-full w-full" />
-          </div>
+          {/* Press-and-hold anywhere on the frame jumps to 2× (see
+              handleVideoPointerDown); a normal tap/click still toggles
+              play/pause via handleVideoClick. */}
+          {isYoutube ? (
+            // YT.Player takes this div over and injects its own iframe —
+            // no other React children ever go inside it.
+            <div
+              className="absolute inset-0"
+              onClick={handleVideoClick}
+              onPointerDown={handleVideoPointerDown}
+              onPointerUp={endVideoHold}
+              onPointerCancel={endVideoHold}
+              onPointerLeave={endVideoHold}
+            >
+              <div ref={ytMountRef} className="pointer-events-none h-full w-full" />
+            </div>
+          ) : (
+            // Plain <video src>, never an <iframe> — the source's own
+            // page/scripts (ads, redirects, etc.) never get a chance to
+            // run, since the browser is just requesting the file itself.
+            // No `controls` attribute: same fully custom control bar
+            // below as the YouTube path, not the browser's native one.
+            <video
+              ref={mp4VideoRef}
+              src={url}
+              playsInline
+              preload="metadata"
+              controlsList="nodownload"
+              className="h-full w-full bg-black object-contain"
+              onClick={handleVideoClick}
+              onPointerDown={handleVideoPointerDown}
+              onPointerUp={endVideoHold}
+              onPointerCancel={endVideoHold}
+              onPointerLeave={endVideoHold}
+              onContextMenu={(e) => e.preventDefault()}
+            />
+          )}
 
           {ytBuffering && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-vault-950/30">

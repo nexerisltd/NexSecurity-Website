@@ -55,6 +55,19 @@ function youtubeWatchUrlFromSourceRef(sourceRef: string): string {
   return `https://www.youtube.com/watch?v=${sourceRef}`;
 }
 
+// mp4: source_ref *is* the playable URL — nothing to parse out of an
+// embed page, just make sure it's a real https URL before it's saved.
+function parseMp4Url(input: string): string | null {
+  const trimmed = input.trim();
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:') return null;
+  } catch {
+    return null;
+  }
+  return trimmed;
+}
+
 export default function AdminVideosPage() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [boards, setBoards] = useState<Board[]>([]);
@@ -67,7 +80,7 @@ export default function AdminVideosPage() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [thumbnailUrl, setThumbnailUrl] = useState('');
-  const [createProvider, setCreateProvider] = useState<'bunny' | 'youtube'>('bunny');
+  const [createProvider, setCreateProvider] = useState<'bunny' | 'youtube' | 'mp4'>('bunny');
   const [embedInput, setEmbedInput] = useState('');
   const [sortOrder, setSortOrder] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState('');
@@ -97,12 +110,18 @@ export default function AdminVideosPage() {
     setError(null);
 
     const sourceRef =
-      createProvider === 'bunny' ? parseBunnyEmbedUrl(embedInput) : parseYoutubeVideoId(embedInput);
+      createProvider === 'bunny'
+        ? parseBunnyEmbedUrl(embedInput)
+        : createProvider === 'youtube'
+          ? parseYoutubeVideoId(embedInput)
+          : parseMp4Url(embedInput);
     if (!sourceRef) {
       setError(
         createProvider === 'bunny'
           ? "Couldn't read that as a Bunny embed URL. It should look like https://iframe.mediadelivery.net/embed/LIBRARY_ID/VIDEO_ID"
-          : "Couldn't read that as a YouTube link. Paste the full video URL (youtube.com/watch?v=... or youtu.be/...) or just the 11-character video id."
+          : createProvider === 'youtube'
+            ? "Couldn't read that as a YouTube link. Paste the full video URL (youtube.com/watch?v=... or youtu.be/...) or just the 11-character video id."
+            : "Couldn't read that as a direct video URL. It needs to be a full https link straight to the .mp4 file."
       );
       return;
     }
@@ -214,11 +233,31 @@ export default function AdminVideosPage() {
                 />
                 YouTube (free, unlisted)
               </label>
+              <label className="flex items-center gap-1.5 text-sm text-ink">
+                <input
+                  type="radio"
+                  name="create-provider"
+                  checked={createProvider === 'mp4'}
+                  onChange={() => {
+                    setCreateProvider('mp4');
+                    setEmbedInput('');
+                  }}
+                />
+                Direct MP4 URL
+              </label>
             </div>
           </Field>
         </div>
         <div className="sm:col-span-2">
-          <Field label={createProvider === 'bunny' ? 'Bunny embed URL' : 'YouTube video URL'}>
+          <Field
+            label={
+              createProvider === 'bunny'
+                ? 'Bunny embed URL'
+                : createProvider === 'youtube'
+                  ? 'YouTube video URL'
+                  : 'Direct video URL (.mp4)'
+            }
+          >
             <input
               required
               value={embedInput}
@@ -226,7 +265,9 @@ export default function AdminVideosPage() {
               placeholder={
                 createProvider === 'bunny'
                   ? 'https://iframe.mediadelivery.net/embed/503487/df2a65b4-…'
-                  : 'https://www.youtube.com/watch?v=… (make sure it is Unlisted, not Public)'
+                  : createProvider === 'youtube'
+                    ? 'https://www.youtube.com/watch?v=… (make sure it is Unlisted, not Public)'
+                    : 'https://example.com/path/video.mp4'
               }
               className="input font-mono text-xs"
             />
@@ -289,8 +330,16 @@ export default function AdminVideosPage() {
                   <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
                     {v.board?.title ?? '—'} · {v.video_resources?.length ?? 0} resource
                     {v.video_resources?.length === 1 ? '' : 's'} ·{' '}
-                    <span className={v.provider === 'youtube' ? 'text-warn' : 'text-ok'}>
-                      {v.provider === 'youtube' ? 'YouTube' : 'Bunny'}
+                    <span
+                      className={
+                        v.provider === 'youtube'
+                          ? 'text-warn'
+                          : v.provider === 'mp4'
+                            ? 'text-signal-glow'
+                            : 'text-ok'
+                      }
+                    >
+                      {v.provider === 'youtube' ? 'YouTube' : v.provider === 'mp4' ? 'Direct MP4' : 'Bunny'}
                     </span>
                   </p>
                 </div>
@@ -334,13 +383,15 @@ function VideoEditPanel({
   const [title, setTitle] = useState(video.title);
   const [description, setDescription] = useState(video.description ?? '');
   const [thumbnailUrl, setThumbnailUrl] = useState(video.thumbnail_url ?? '');
-  const [editProvider, setEditProvider] = useState<'bunny' | 'youtube'>(
-    video.provider === 'youtube' ? 'youtube' : 'bunny'
+  const [editProvider, setEditProvider] = useState<'bunny' | 'youtube' | 'mp4'>(
+    video.provider === 'youtube' ? 'youtube' : video.provider === 'mp4' ? 'mp4' : 'bunny'
   );
   const [embedInput, setEmbedInput] = useState(
     video.provider === 'youtube'
       ? youtubeWatchUrlFromSourceRef(video.source_ref)
-      : bunnyEmbedUrlFromSourceRef(video.source_ref)
+      : video.provider === 'mp4'
+        ? video.source_ref
+        : bunnyEmbedUrlFromSourceRef(video.source_ref)
   );
   const [sortOrder, setSortOrder] = useState(video.sort_order ?? 0);
   const [downloadUrl, setDownloadUrl] = useState(video.download_url ?? '');
@@ -354,7 +405,11 @@ function VideoEditPanel({
   async function saveDetails(e: React.FormEvent) {
     e.preventDefault();
     const sourceRef =
-      editProvider === 'bunny' ? parseBunnyEmbedUrl(embedInput) : parseYoutubeVideoId(embedInput);
+      editProvider === 'bunny'
+        ? parseBunnyEmbedUrl(embedInput)
+        : editProvider === 'youtube'
+          ? parseYoutubeVideoId(embedInput)
+          : parseMp4Url(embedInput);
 
     // Switching provider (or re-pasting the URL) requires a URL that
     // actually parses — otherwise this would silently keep the OLD
@@ -364,7 +419,9 @@ function VideoEditPanel({
       onError(
         editProvider === 'bunny'
           ? "Couldn't read that as a Bunny embed URL. Paste the full embed URL to switch providers."
-          : "Couldn't read that as a YouTube link. Paste the video URL or id to switch providers."
+          : editProvider === 'youtube'
+            ? "Couldn't read that as a YouTube link. Paste the video URL or id to switch providers."
+            : "Couldn't read that as a direct video URL. Paste a full https .mp4 link to switch providers."
       );
       return;
     }
@@ -458,10 +515,30 @@ function VideoEditPanel({
                 />
                 YouTube (free, unlisted)
               </label>
+              <label className="flex items-center gap-1.5 text-sm text-ink">
+                <input
+                  type="radio"
+                  name={`edit-provider-${video.id}`}
+                  checked={editProvider === 'mp4'}
+                  onChange={() => {
+                    setEditProvider('mp4');
+                    setEmbedInput(video.provider === 'mp4' ? video.source_ref : '');
+                  }}
+                />
+                Direct MP4 URL
+              </label>
             </div>
           </Field>
         </div>
-        <Field label={editProvider === 'bunny' ? 'Bunny embed URL' : 'YouTube video URL'}>
+        <Field
+          label={
+            editProvider === 'bunny'
+              ? 'Bunny embed URL'
+              : editProvider === 'youtube'
+                ? 'YouTube video URL'
+                : 'Direct video URL (.mp4)'
+          }
+        >
           <input
             value={embedInput}
             onChange={(e) => setEmbedInput(e.target.value)}

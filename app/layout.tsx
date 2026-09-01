@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Manrope, JetBrains_Mono } from 'next/font/google';
+import { RegisterServiceWorker } from '@/components/RegisterServiceWorker';
 import './globals.css';
 
 const manrope = Manrope({
@@ -28,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${manrope.variable} ${mono.variable}`}>
       <body className="min-h-screen bg-vault-950 font-body text-ink antialiased">
+        <RegisterServiceWorker />
         {children}
       </body>
     </html>

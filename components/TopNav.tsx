@@ -66,6 +66,15 @@ const ICONS = {
       strokeLinejoin="round"
     />
   ),
+  downloads: (
+    <path
+      d="M12 3.5v11m0 0-3.8-3.8M12 14.5l3.8-3.8M5 17v1.5A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V17"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  ),
 };
 
 export function TopNav({
@@ -113,6 +122,12 @@ export function TopNav({
       label: 'Routine',
       icon: ICONS.routine,
       match: (p) => p.startsWith('/learn/routines'),
+    },
+    {
+      href: '/learn/downloads',
+      label: 'Downloads',
+      icon: ICONS.downloads,
+      match: (p) => p.startsWith('/learn/downloads'),
     },
     ...(isAdmin
       ? [{ href: '/admin', label: 'Admin', icon: ICONS.admin, match: (p: string) => p.startsWith('/admin') }]
@@ -303,7 +318,7 @@ export function TopNav({
           </Link>
         </div>
 
-        <nav className="hidden items-center gap-1 md:flex">
+        <nav className="hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto no-scrollbar md:flex">
           {items.map((item) => {
             const active = item.href === activeHref;
             return (
@@ -349,7 +364,7 @@ export function TopNav({
           </svg>
         </button>
 
-        <div className="ml-auto flex items-center gap-1.5 sm:gap-3">
+        <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-3">
           <button
             onClick={() => setSearchOpen(true)}
             className="hidden min-w-0 items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint transition hover:border-signal/50 lg:flex"

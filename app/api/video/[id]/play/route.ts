@@ -57,7 +57,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
   }
 
-  if (video.provider !== 'bunny' && video.provider !== 'youtube') {
+  if (video.provider !== 'bunny' && video.provider !== 'youtube' && video.provider !== 'mp4') {
     await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, {
       reason: 'unsupported_provider',
     });
@@ -69,6 +69,13 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     // source_ref is just the bare YouTube video id here (see the
     // parsing helper in app/admin/videos/page.tsx).
     url = buildYoutubeEmbedUrl(video.source_ref);
+  } else if (video.provider === 'mp4') {
+    // source_ref is the direct file URL itself, already validated as an
+    // https URL at write time (see videoSchema in lib/validation.ts).
+    // Nothing to build — it's played as-is by a native <video> element,
+    // never through an <iframe>, so the source's own page/scripts (ads,
+    // redirects, etc.) never get a chance to run.
+    url = video.source_ref;
   } else {
     const [libraryId, bunnyVideoId] = video.source_ref.split('/');
     if (!libraryId || !bunnyVideoId) {

@@ -72,14 +72,19 @@ export function AdminSidebar() {
   const pathname = usePathname();
 
   return (
-    <nav className="glass-panel h-fit w-52 shrink-0 space-y-1 rounded-2xl p-2.5">
+    // Below md: a horizontally-scrollable tab strip spanning full width
+    // (matches how TopNav's own links behave at narrow widths) — never a
+    // fixed-width column squeezed beside content, which is what forced
+    // every admin page's text into a ~110px-wide sliver on a phone.
+    // At md+: back to the original fixed-width vertical list.
+    <nav className="glass-panel flex shrink-0 gap-1 overflow-x-auto no-scrollbar rounded-2xl p-2.5 md:h-fit md:w-52 md:flex-col md:space-y-1 md:overflow-visible">
       {ITEMS.map((item) => {
         const active = item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href);
         return (
           <Link
             key={item.href}
             href={item.href}
-            className={`flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+            className={`flex shrink-0 items-center gap-2.5 whitespace-nowrap rounded-lg px-3 py-2.5 text-sm font-medium transition ${
               active ? 'bg-signal/10 text-signal' : 'text-ink-dim hover:bg-white/70 hover:text-ink'
             }`}
           >

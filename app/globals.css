@@ -107,3 +107,17 @@ body::before {
 .animate-scan {
   animation: scan 2.4s ease-in-out infinite;
 }
+
+/* Lets the desktop nav-link strip in TopNav.tsx scroll horizontally
+   (rather than force the whole header wider than its container) at
+   viewport widths where the links + logo + search/notif/avatar cluster
+   don't all fit on one row — invisibly, since a visible scrollbar on a
+   single-row nav reads as broken chrome rather than an intentional
+   control. */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* old Edge/IE */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/new Edge */
+}

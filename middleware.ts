@@ -9,6 +9,7 @@ const PUBLIC_PATHS = [
   '/privacy',
   '/terms',
   '/manifest.json',
+  '/sw.js',
   '/.well-known',
 ];
 
