@@ -9,7 +9,9 @@ import { SearchInput } from '@/components/SearchInput';
 import { relativeTime } from '@/lib/relativeTime';
 
 type NavItem = { href: string; label: string; icon: JSX.Element; match: (path: string) => boolean };
-type SearchResult = { id: string; title: string; board_type: 'normal' | 'routine'; published: boolean };
+type SearchResult =
+  | { type: 'board'; id: string; title: string; board_type: 'normal' | 'routine'; published: boolean }
+  | { type: 'class'; id: string; title: string; published: boolean };
 type PendingRequest = {
   id: string;
   device_id: string;
@@ -179,7 +181,7 @@ export function TopNav({
       try {
         const res = await fetch(`/api/learn/search?q=${encodeURIComponent(q)}`);
         const data = await res.json();
-        setSearchResults(res.ok ? data.boards ?? [] : []);
+        setSearchResults(res.ok ? data.results ?? [] : []);
       } catch {
         setSearchResults([]);
       } finally {
@@ -189,9 +191,9 @@ export function TopNav({
     return () => window.clearTimeout(id);
   }, [searchQuery]);
 
-  function goToResult(id: string) {
+  function goToResult(result: SearchResult) {
     setSearchOpen(false);
-    router.push(`/learn/board/${id}`);
+    router.push(result.type === 'class' ? `/learn/video/${result.id}` : `/learn/board/${result.id}`);
   }
 
   useEffect(() => {
@@ -306,12 +308,12 @@ export function TopNav({
     .join('');
 
   return (
-    <header className="sticky top-3 z-30 px-4">
-      <div className="glass-panel-solid mx-auto max-w-6xl rounded-2xl">
+    <header className="relative z-30 px-4 pt-3">
+      <div className="glass-panel-solid mx-auto max-w-screen-2xl rounded-2xl">
         <div className="flex items-center gap-3 px-4 py-3 sm:px-6 md:gap-6">
         <div className="flex shrink-0 items-center gap-2">
           <Link href="/" className="flex items-center gap-2.5">
-            <span className="relative h-8 w-8 overflow-hidden rounded-lg border border-white/70 bg-white/70 shadow-glass">
+            <span className="relative h-8 w-8 overflow-hidden rounded-lg border border-vault-border bg-vault-800 shadow-glass">
               <Image src="/logo.png" alt="NexSecurity" fill className="object-cover" />
             </span>
             <span className="hidden font-display text-sm font-semibold tracking-tight text-ink sm:inline">NexSecurity</span>
@@ -367,7 +369,7 @@ export function TopNav({
         <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-3">
           <button
             onClick={() => setSearchOpen(true)}
-            className="hidden min-w-0 items-center gap-2 rounded-lg border border-vault-border bg-white/60 px-3 py-2 text-ink-faint transition hover:border-signal/50 lg:flex"
+            className="hidden min-w-0 items-center gap-2 rounded-lg border border-vault-border bg-vault-800/60 px-3 py-2 text-ink-faint transition hover:border-signal/50 lg:flex"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
               <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8" />
@@ -453,7 +455,7 @@ export function TopNav({
                 <img
                   src={googleProfile.avatarUrl}
                   alt=""
-                  className="h-8 w-8 rounded-full border border-white/70 object-cover"
+                  className="h-8 w-8 rounded-full border border-vault-border object-cover"
                   referrerPolicy="no-referrer"
                 />
               ) : (
@@ -555,20 +557,46 @@ export function TopNav({
                 </p>
               ) : (
                 <ul className="mt-1 space-y-0.5">
-                  {searchResults.map((b) => (
-                    <li key={b.id}>
+                  {searchResults.map((r) => (
+                    <li key={`${r.type}-${r.id}`}>
                       <button
-                        onClick={() => goToResult(b.id)}
-                        className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-ink transition hover:bg-vault-600"
+                        onClick={() => goToResult(r)}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm text-ink transition hover:bg-vault-600"
                       >
-                        <span className="truncate">{b.title}</span>
+                        <svg
+                          width="15"
+                          height="15"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          className="shrink-0 text-ink-faint"
+                          aria-hidden="true"
+                        >
+                          {r.type === 'class' ? (
+                            <path
+                              d="M6 4h9l3 3v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm8 0v4h4M9.5 11l5 3-5 3v-6Z"
+                              stroke="currentColor"
+                              strokeWidth="1.7"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          ) : (
+                            <path
+                              d="m12 3 8 4-8 4-8-4 8-4Zm-8 8 8 4 8-4"
+                              stroke="currentColor"
+                              strokeWidth="1.7"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          )}
+                        </svg>
+                        <span className="min-w-0 flex-1 truncate">{r.title}</span>
                         <span className="flex shrink-0 gap-1.5">
-                          {b.board_type === 'routine' && (
+                          {r.type === 'board' && r.board_type === 'routine' && (
                             <span className="rounded-full border border-vault-border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-ink-faint">
                               Routine
                             </span>
                           )}
-                          {!b.published && (
+                          {!r.published && (
                             <span className="rounded-full border border-warn/30 bg-warn/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-warn">
                               Draft
                             </span>

@@ -52,7 +52,7 @@ const FEATURES = [
       />
     ),
     bg: 'bg-violet-500/10',
-    fg: 'text-violet-600',
+    fg: 'text-violet-400',
   },
   {
     title: 'Fast & Simple',
@@ -98,8 +98,7 @@ export default async function HomePage() {
   // supabase/schema.sql), so these go through the admin client — same
   // pattern used in app/learn/board/[id]/page.tsx for video reads, just
   // for counts here instead of content.
-  const [{ count: activeMembers }, { count: instructors }, { data: publishedBoards }] = await Promise.all([
-    adminClient.from('authorized_users').select('id', { count: 'exact', head: true }).eq('status', 'ACTIVE'),
+  const [{ count: instructors }, { data: publishedBoards }] = await Promise.all([
     // No "instructor" role exists in the schema — ADMIN is the closest
     // real concept (the people who publish/manage content), so that's
     // what this stat counts.
@@ -118,6 +117,7 @@ export default async function HomePage() {
     ? await adminClient
         .from('videos')
         .select('id', { count: 'exact', head: true })
+        .eq('published', true)
         .in(
           'board_id',
           publishedBoards.map((b) => b.id)
@@ -125,7 +125,6 @@ export default async function HomePage() {
     : { count: 0 };
 
   const stats = [
-    { label: 'Active Members', value: activeMembers ?? 0 },
     { label: 'Classes Published', value: classesPublished ?? 0 },
     { label: 'Instructors', value: instructors ?? 0 },
     { label: 'Boards', value: topBoards.length },
@@ -138,6 +137,7 @@ export default async function HomePage() {
     const { data: recentVideos } = await adminClient
       .from('videos')
       .select('id, title, board_id, created_at')
+      .eq('published', true)
       .in(
         'board_id',
         publishedBoards.map((b) => b.id)
@@ -247,7 +247,7 @@ export default async function HomePage() {
 
       {/* Stats */}
       <section className="border-y border-vault-border bg-vault-900">
-        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-6 px-6 py-10 sm:grid-cols-4">
+        <div className="mx-auto grid max-w-6xl grid-cols-3 gap-6 px-6 py-10">
           {stats.map((stat) => (
             <div key={stat.label} className="flex items-center gap-3">
               <div>
