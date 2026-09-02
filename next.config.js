@@ -79,6 +79,22 @@ const nextConfig = {
         source: '/:path*',
         headers: securityHeaders,
       },
+      // The service worker file itself must NEVER be served from a
+      // cache — a stale copy of /sw.js sticking around is exactly what
+      // leaves a browser stuck running an old cached version of the app
+      // against a redeployed backend until someone thinks to hard-refresh
+      // or clear site data (the actual bug this fixes: classes silently
+      // failing to play after a deploy, only recovering once the browser
+      // is forced to re-fetch everything). Browsers already re-check a
+      // registered service worker's byte content on most navigations
+      // regardless of this header, but that check is itself an HTTP
+      // request subject to normal caching — without this, a CDN/browser
+      // cache can make that very check return stale bytes, silently
+      // defeating it.
+      {
+        source: '/sw.js',
+        headers: [{ key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' }],
+      },
     ];
   },
 };

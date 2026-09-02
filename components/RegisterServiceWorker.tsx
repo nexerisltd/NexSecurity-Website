@@ -11,10 +11,19 @@ import { useEffect } from 'react';
 export function RegisterServiceWorker() {
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('/sw.js').catch(() => {
-      // Best-effort: a failed registration just means no install prompt /
-      // no offline shell later — never something to surface to the user.
-    });
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((registration) => {
+        // Explicitly ask on every load, not just on whatever cadence the
+        // browser's own heuristic uses — this is what lets anyone already
+        // stuck on an old cached build recover the moment they reopen the
+        // app, instead of only on some navigations.
+        registration.update().catch(() => {});
+      })
+      .catch(() => {
+        // Best-effort: a failed registration just means no install prompt
+        // later — never something to surface to the user.
+      });
   }, []);
 
   return null;
