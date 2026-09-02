@@ -5,31 +5,32 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Kept the same token names (vault-*, ink-*, signal-*) that every
-        // component already uses — only the values changed, from a dark
-        // "vault" palette to a light glassmorphism / Fluent-style one.
-        // vault-900/800/700 are translucent whites so backdrop-blur
-        // actually reads as glass instead of a flat card.
+        // Same token names (vault-*, ink-*, signal-*) every component
+        // already uses — only the values changed. Now a dark navy
+        // glassmorphism palette: vault-900/800/700 are translucent
+        // NAVY-BLUE tints (not white) so backdrop-blur panels read as
+        // tinted glass floating over the dark page background, matching
+        // the reference design's depth — not flat dark cards.
         vault: {
-          950: '#EEF2FB', // page background
-          900: 'rgba(255,255,255,0.62)', // primary glass surface
-          800: 'rgba(255,255,255,0.46)', // secondary glass surface
-          700: 'rgba(255,255,255,0.30)',
-          600: 'rgba(15,23,42,0.05)',
-          border: 'rgba(15,23,42,0.09)',
+          950: '#050E1F', // page background (deepest navy, near-black)
+          900: 'rgba(30,58,95,0.42)', // primary glass surface (nav, cards)
+          800: 'rgba(30,58,95,0.30)', // secondary glass surface
+          700: 'rgba(30,58,95,0.20)',
+          600: 'rgba(255,255,255,0.06)', // subtle hover tint on dark
+          border: 'rgba(255,255,255,0.12)', // light-catching edge on dark glass
         },
         signal: {
-          DEFAULT: '#3D6EFF',
-          dim: '#2748B5',
-          glow: '#6E96FF',
+          DEFAULT: '#417AF8',
+          dim: '#2E5FD9',
+          glow: '#79A0FF',
         },
-        ok: '#1E9E6A',
-        warn: '#B8791A',
-        danger: '#D8383F',
+        ok: '#2FBE82',
+        warn: '#E3A63D',
+        danger: '#F2555C',
         ink: {
-          DEFAULT: '#101828',
-          dim: '#5B6472',
-          faint: '#8A93A3',
+          DEFAULT: '#F3F6FC', // headings — near-white on dark
+          dim: '#B7BECF', // body text — muted blue-grey
+          faint: '#8A93AC', // labels/meta — dimmer still
         },
       },
       fontFamily: {
@@ -38,14 +39,26 @@ const config: Config = {
         mono: ['var(--font-mono)', 'monospace'],
       },
       boxShadow: {
-        glow: '0 0 0 1px rgba(61,110,255,0.18), 0 8px 30px -8px rgba(61,110,255,0.28)',
-        glass: '0 8px 32px -8px rgba(16,24,40,0.12), inset 0 1px 0 0 rgba(255,255,255,0.5)',
+        glow: '0 0 0 1px rgba(65,122,248,0.28), 0 8px 30px -8px rgba(65,122,248,0.4)',
+        // Dark glass needs a real cast shadow (not just a light-bevel
+        // ring) to actually read as "floating" — the inset highlight is
+        // now a faint light catch along the top edge instead of a bright
+        // white bevel, which is what "Fluent" depth looks like on dark.
+        glass: '0 20px 50px -14px rgba(0,0,0,0.55), inset 0 1px 0 0 rgba(255,255,255,0.09)',
       },
       backgroundImage: {
-        grid: 'linear-gradient(to right, rgba(16,24,40,0.035) 1px, transparent 1px), linear-gradient(to bottom, rgba(16,24,40,0.035) 1px, transparent 1px)',
+        grid: 'linear-gradient(to right, rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.035) 1px, transparent 1px)',
+        // Soft ambient glow blobs behind the hero — the ellipses of color
+        // visible in the reference design's background. Layered radial
+        // gradients rather than an image so it scales/recolors for free.
+        glow: 'radial-gradient(ellipse 900px 500px at 15% -10%, rgba(65,122,248,0.22), transparent 60%), radial-gradient(ellipse 700px 500px at 100% 10%, rgba(122,89,255,0.14), transparent 60%)',
       },
       backdropBlur: {
         xs: '2px',
+      },
+      backdropSaturate: {
+        150: '1.5',
+        180: '1.8',
       },
     },
   },

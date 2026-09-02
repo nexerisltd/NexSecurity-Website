@@ -322,7 +322,7 @@ function DeviceRow({
                 onBlur={save}
                 onKeyDown={(e) => e.key === 'Enter' && save()}
                 placeholder="Name this device (e.g. Home laptop)"
-                className="w-full rounded-md border border-vault-border bg-white/70 px-2 py-1 text-sm text-ink outline-none focus:border-signal"
+                className="w-full rounded-md border border-vault-border bg-vault-800/70 px-2 py-1 text-sm text-ink outline-none focus:border-signal"
               />
             ) : (
               <button

@@ -52,7 +52,7 @@ export default async function RoutinesPage() {
         <div className="mt-8 space-y-8">
           {routines.map((r) => (
             <div key={r.id} className="glass-panel overflow-hidden rounded-2xl">
-              <div className="flex items-start justify-between gap-4 border-b border-white/50 px-6 py-4">
+              <div className="flex items-start justify-between gap-4 border-b border-vault-border px-6 py-4">
                 <div>
                   <h2 className="font-display text-base font-semibold text-ink">{r.title}</h2>
                   {r.description && <p className="mt-1 text-sm text-ink-dim">{r.description}</p>}

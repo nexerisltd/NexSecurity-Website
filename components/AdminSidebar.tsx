@@ -85,7 +85,7 @@ export function AdminSidebar() {
             key={item.href}
             href={item.href}
             className={`flex shrink-0 items-center gap-2.5 whitespace-nowrap rounded-lg px-3 py-2.5 text-sm font-medium transition ${
-              active ? 'bg-signal/10 text-signal' : 'text-ink-dim hover:bg-white/70 hover:text-ink'
+              active ? 'bg-signal/10 text-signal' : 'text-ink-dim hover:bg-vault-700 hover:text-ink'
             }`}
           >
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">

@@ -9,7 +9,7 @@ export type OverviewActivity = { videoId: string; title: string; category: strin
 const PALETTE = [
   { bg: 'bg-signal/10', fg: 'text-signal' }, // blue
   { bg: 'bg-ok/10', fg: 'text-ok' }, // green
-  { bg: 'bg-violet-500/10', fg: 'text-violet-600' }, // purple
+  { bg: 'bg-violet-500/10', fg: 'text-violet-400' }, // purple
   { bg: 'bg-warn/10', fg: 'text-warn' }, // amber/orange
 ];
 

@@ -165,7 +165,7 @@ export default async function AdminOverview() {
 
   const stats = [
     { label: 'Users', value: userCount ?? 0, delta: userWeekCount ?? 0, icon: 'user', bg: 'bg-signal/10', fg: 'text-signal' },
-    { label: 'Boards', value: boardCount ?? 0, delta: boardWeekCount ?? 0, icon: 'board', bg: 'bg-violet-500/10', fg: 'text-violet-600' },
+    { label: 'Boards', value: boardCount ?? 0, delta: boardWeekCount ?? 0, icon: 'board', bg: 'bg-violet-500/10', fg: 'text-violet-400' },
     { label: 'Classes', value: classCount ?? 0, delta: classWeekCount ?? 0, icon: 'class', bg: 'bg-ok/10', fg: 'text-ok' },
     { label: 'E-Books', value: ebookCount ?? 0, delta: ebookWeekCount ?? 0, icon: 'ebook', bg: 'bg-warn/10', fg: 'text-warn' },
   ];
@@ -322,7 +322,7 @@ export default async function AdminOverview() {
           <div className="mt-3 grid grid-cols-2 gap-3">
             <QuickAction href="/admin/users" label="Add New User" icon={EVENT_ICONS.user} bg="bg-signal/10" fg="text-signal" />
             <QuickAction href="/admin/requests" label="Device Requests" icon={EVENT_ICONS.role} bg="bg-danger/10" fg="text-danger" />
-            <QuickAction href="/admin/boards" label="Create Board" icon={EVENT_ICONS.board} bg="bg-violet-500/10" fg="text-violet-600" />
+            <QuickAction href="/admin/boards" label="Create Board" icon={EVENT_ICONS.board} bg="bg-violet-500/10" fg="text-violet-400" />
             <QuickAction href="/admin/videos" label="Add Class" icon={EVENT_ICONS.class} bg="bg-ok/10" fg="text-ok" />
             <QuickAction href="/admin/ebooks" label="Upload E-Book" icon={EVENT_ICONS.ebook} bg="bg-warn/10" fg="text-warn" />
           </div>

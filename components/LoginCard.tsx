@@ -41,7 +41,7 @@ export function LoginCard({
     <div className="relative w-full max-w-sm">
       <div className="glass-panel relative overflow-hidden rounded-3xl">
         <div className="flex flex-col items-center px-8 pt-10">
-          <div className="relative h-20 w-20 overflow-hidden rounded-2xl border border-white/70 bg-white/70 shadow-glass">
+          <div className="relative h-20 w-20 overflow-hidden rounded-2xl border border-vault-border bg-vault-800 shadow-glass">
             <Image src="/logo.png" alt="NexSecurity" fill className="object-cover" priority />
           </div>
           <p className="mt-5 font-mono text-[11px] uppercase tracking-[0.2em] text-signal">
@@ -92,7 +92,7 @@ export function LoginCard({
           <button
             onClick={handleSignIn}
             disabled={loading}
-            className="flex w-full items-center justify-center gap-3 rounded-xl border border-vault-border bg-white/90 px-5 py-3 text-sm font-medium text-ink shadow-glass transition hover:bg-white disabled:opacity-60"
+            className="flex w-full items-center justify-center gap-3 rounded-xl border border-vault-border bg-white/95 px-5 py-3 text-sm font-medium text-slate-800 shadow-glass transition hover:bg-white disabled:opacity-60"
           >
             <GoogleMark />
             {loading ? 'Redirecting…' : 'Continue with Google'}

@@ -3,13 +3,13 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 html,
 body {
-  background-color: #eef2fb;
-  color: #101828;
+  background-color: #050e1f;
+  color: #f3f6fc;
 }
 
 /* Always reserve the vertical scrollbar's gutter, whether or not the
@@ -35,7 +35,10 @@ body {
 
 /* Liquid Glass background: soft, blurred color blobs fixed behind every
    page, the way Fluent/"liquid glass" surfaces get their depth from what's
-   blurred underneath them rather than from a flat color. */
+   blurred underneath them rather than from a flat color. Dark navy base
+   with cool blue/violet glow blobs — every glass panel elsewhere
+   (.glass-panel, TopNav, cards) is a translucent tint OVER this, which is
+   what makes them read as floating glass rather than flat dark cards. */
 body::before {
   content: '';
   position: fixed;
@@ -43,42 +46,46 @@ body::before {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(600px circle at 8% 8%, rgba(61, 110, 255, 0.16), transparent 60%),
-    radial-gradient(500px circle at 92% 18%, rgba(110, 150, 255, 0.14), transparent 55%),
-    radial-gradient(700px circle at 50% 100%, rgba(150, 120, 255, 0.12), transparent 60%),
-    linear-gradient(180deg, #f5f8ff 0%, #eef2fb 100%);
+    radial-gradient(700px circle at 10% 6%, rgba(65, 122, 248, 0.22), transparent 60%),
+    radial-gradient(600px circle at 92% 16%, rgba(121, 160, 255, 0.16), transparent 55%),
+    radial-gradient(800px circle at 55% 100%, rgba(122, 89, 255, 0.14), transparent 60%),
+    linear-gradient(180deg, #071a38 0%, #050e1f 55%, #030a17 100%);
 }
 
 @layer components {
   .input {
-    @apply w-full rounded-lg border border-vault-border bg-white/70 px-3 py-2 text-sm text-ink outline-none backdrop-blur-sm transition placeholder:text-ink-faint focus:border-signal focus:bg-white/90 focus:shadow-glow;
+    @apply w-full rounded-lg border border-vault-border bg-vault-800/70 px-3 py-2 text-sm text-ink outline-none backdrop-blur-sm transition placeholder:text-ink-faint focus:border-signal focus:bg-vault-700 focus:shadow-glow;
   }
 
-  /* Reusable Fluent/liquid-glass panel: translucent surface, blurred
-     backdrop, soft depth shadow, thin light-catching border. */
+  /* Reusable Fluent/liquid-glass panel: translucent NAVY surface (not
+     white — this is a dark theme), blurred + saturated backdrop (the
+     saturation boost is what makes it read as frosted "acrylic" glass
+     rather than a flat dark card — it's what makes color bleed through
+     from whatever's behind it), soft depth shadow, thin light-catching
+     border. */
   .glass-panel {
-    @apply border border-white/60 bg-white/60 backdrop-blur-xl shadow-glass;
+    @apply border border-vault-border bg-vault-900 backdrop-blur-2xl backdrop-saturate-150 shadow-glass;
   }
 
   .glass-panel-solid {
-    @apply border border-white/70 bg-white/80 backdrop-blur-xl shadow-glass;
+    @apply border border-vault-border bg-vault-900/80 backdrop-blur-2xl backdrop-saturate-150 shadow-glass;
   }
 }
 
 ::selection {
-  background: rgba(61, 110, 255, 0.22);
+  background: rgba(65, 122, 248, 0.35);
 }
 
 :focus-visible {
-  outline: 2px solid #3d6eff;
+  outline: 2px solid #417af8;
   outline-offset: 2px;
 }
 
 .bg-scanlines {
   background-image: repeating-linear-gradient(
     to bottom,
-    rgba(16, 24, 40, 0.02) 0px,
-    rgba(16, 24, 40, 0.02) 1px,
+    rgba(255, 255, 255, 0.025) 0px,
+    rgba(255, 255, 255, 0.025) 1px,
     transparent 1px,
     transparent 3px
   );

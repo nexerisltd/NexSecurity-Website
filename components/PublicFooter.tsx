@@ -3,12 +3,12 @@ import Image from 'next/image';
 
 export function PublicFooter() {
   return (
-    <footer className="border-t border-white/60 bg-white/40 backdrop-blur-xl">
+    <footer className="border-t border-vault-border bg-vault-900/40 backdrop-blur-2xl backdrop-saturate-150">
       <div className="mx-auto max-w-6xl px-6 py-12">
         <div className="grid grid-cols-1 gap-10 sm:grid-cols-4">
           <div className="sm:col-span-2">
             <div className="flex items-center gap-2.5">
-              <span className="relative h-8 w-8 overflow-hidden rounded-lg border border-white/70 bg-white/70 shadow-glass">
+              <span className="relative h-8 w-8 overflow-hidden rounded-lg border border-vault-border bg-vault-800 shadow-glass">
                 <Image src="/logo.png" alt="NexSecurity" fill className="object-cover" />
               </span>
               <span className="font-display text-sm font-semibold text-ink">NexSecurity</span>
@@ -65,7 +65,7 @@ export function PublicFooter() {
           </div>
         </div>
 
-        <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-white/60 pt-6 text-xs text-ink-faint sm:flex-row sm:items-center">
+        <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-vault-border pt-6 text-xs text-ink-faint sm:flex-row sm:items-center">
           <span>© {new Date().getFullYear()} NexSecurity. All rights reserved.</span>
           <span className="font-mono uppercase tracking-widest">Private by default</span>
         </div>

@@ -129,7 +129,7 @@ export function VideoDownloadButton({
                 key={r}
                 onClick={() => pick(r)}
                 disabled={issuing !== null}
-                className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm text-ink transition hover:bg-white/70 disabled:opacity-50"
+                className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm text-ink transition hover:bg-vault-700 disabled:opacity-50"
               >
                 {r}
                 {issuing === r && <span className="text-xs text-ink-faint">…</span>}
