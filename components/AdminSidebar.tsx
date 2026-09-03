@@ -76,6 +76,16 @@ const ITEMS = [
       />
     ),
   },
+  {
+    href: '/admin/popup',
+    label: 'Popup',
+    icon: (
+      <g stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="4" y="5" width="16" height="12" rx="2" />
+        <path d="M8 21h8M12 17v4" />
+      </g>
+    ),
+  },
 ];
 
 export function AdminSidebar() {

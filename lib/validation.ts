@@ -139,3 +139,18 @@ export const videoProgressSchema = z.object({
   position_seconds: z.number().int().min(0).max(24 * 60 * 60),
   duration_seconds: z.number().int().min(0).max(24 * 60 * 60).optional().nullable(),
 });
+
+// The site-wide announcement popup, shown to authorized users on a
+// repeating interval (interval_hours = the "watch time" — how often the
+// same person is shown it again). Singleton settings row; see
+// supabase/migrations/0006_device_approval_and_popup.sql.
+export const popupSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  title: z.string().trim().max(200).default(''),
+  message: z.string().trim().max(2000).default(''),
+  button_label: z.string().trim().min(1).max(60).default('Got it'),
+  button_url: safeUrl.optional().nullable(),
+  interval_hours: z.number().int().min(1).max(24 * 365).default(24),
+});
+
+export const popupSettingsUpdateSchema = popupSettingsSchema.partial();

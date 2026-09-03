@@ -32,9 +32,20 @@ export async function PATCH(
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input.' }, { status: 400 });
 
   const adminClient = createSupabaseAdminClient();
+  // When this decision changes status, stamp WHO made the call — the
+  // authenticated admin, taken from their own verified session, never
+  // from the request body — so the device row itself can show "Approved
+  // by admin@x.com" without a trip to audit_logs. A pure rename (no
+  // status in the payload) leaves these untouched.
+  const patch: Record<string, unknown> = { ...parsed.data };
+  if (parsed.data.status) {
+    patch.approved_by = auth.user.email;
+    patch.approved_at = new Date().toISOString();
+  }
+
   const { data, error } = await adminClient
     .from('user_devices')
-    .update(parsed.data)
+    .update(patch)
     .eq('id', parsedDeviceId.data)
     .eq('user_id', parsedUserId.data)
     .select('id, status')

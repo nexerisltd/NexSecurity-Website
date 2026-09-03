@@ -235,6 +235,13 @@ create table if not exists public.user_devices (
   -- plays no role in the auth check itself.
   label text,
   note text,
+  -- Who/what approved (or rejected/blocked) this device's CURRENT status:
+  -- an admin's email when a person made the call, or null when the
+  -- system auto-approved it (a brand-new account's first device — see
+  -- lib/auth.ts). Lets the admin panel show "Approved by admin@x.com" or
+  -- "First device — auto-approved" directly on the row.
+  approved_by text,
+  approved_at timestamptz,
   first_seen timestamptz not null default now(),
   last_seen timestamptz not null default now(),
   created_at timestamptz not null default now(),
@@ -265,6 +272,43 @@ create table if not exists public.video_progress (
 
 create index if not exists idx_video_progress_user_video on public.video_progress (lower(user_email), video_id);
 
+-- ---------------------------------------------------------------------------
+-- 11. site_popup_settings — a single site-wide announcement popup, shown
+--     to authorized users on a repeating interval. Singleton row (id
+--     pinned to 1) — one configuration for the whole site, not a list of
+--     campaigns. `version` is bumped by the API on every save so an
+--     updated announcement reaches everyone immediately instead of
+--     waiting out the old interval (see user_popup_views below).
+-- ---------------------------------------------------------------------------
+create table if not exists public.site_popup_settings (
+  id integer primary key default 1,
+  enabled boolean not null default false,
+  title text not null default '',
+  message text not null default '',
+  button_label text not null default 'Got it',
+  button_url text,
+  -- Hours between repeat showings to the same user ("watch time").
+  interval_hours integer not null default 24 check (interval_hours > 0),
+  version integer not null default 1,
+  updated_at timestamptz not null default now(),
+  constraint site_popup_settings_singleton check (id = 1)
+);
+
+insert into public.site_popup_settings (id) values (1)
+on conflict (id) do nothing;
+
+-- ---------------------------------------------------------------------------
+-- 12. user_popup_views — one row per user: the last popup version they
+--     were shown, and when. A version_seen that doesn't match the
+--     CURRENT site_popup_settings.version counts as "hasn't seen this
+--     one yet", regardless of last_shown_at.
+-- ---------------------------------------------------------------------------
+create table if not exists public.user_popup_views (
+  user_email text primary key,
+  version_seen integer not null,
+  last_shown_at timestamptz not null default now()
+);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ============================================================================
@@ -281,6 +325,8 @@ alter table public.e_books enable row level security;
 alter table public.user_devices enable row level security;
 alter table public.video_progress enable row level security;
 alter table public.board_user_access enable row level security;
+alter table public.site_popup_settings enable row level security;
+alter table public.user_popup_views enable row level security;
 
 -- Helper: is the currently authenticated user an ACTIVE authorized user?
 create or replace function public.is_authorized() returns boolean as $$
@@ -416,6 +462,27 @@ drop policy if exists board_user_access_admin_write on public.board_user_access;
 create policy board_user_access_admin_write on public.board_user_access
   for all using (public.is_admin())
   with check (public.is_admin());
+
+-- site_popup_settings: any authorized user can read it (the popup API
+-- needs to check enabled/interval); only admins can write.
+drop policy if exists site_popup_settings_read on public.site_popup_settings;
+create policy site_popup_settings_read on public.site_popup_settings
+  for select using (public.is_authorized() or public.is_admin());
+
+drop policy if exists site_popup_settings_admin_write on public.site_popup_settings;
+create policy site_popup_settings_admin_write on public.site_popup_settings
+  for all using (public.is_admin()) with check (public.is_admin());
+
+-- user_popup_views: a user may only read/write their OWN "last seen"
+-- row — same shape as video_progress above.
+drop policy if exists user_popup_views_self on public.user_popup_views;
+create policy user_popup_views_self on public.user_popup_views
+  for all using (
+    lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', '')) or public.is_admin()
+  )
+  with check (
+    lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', '')) or public.is_admin()
+  );
 
 -- ============================================================================
 -- Seed: replace with your own admin email after first deploy, e.g.:

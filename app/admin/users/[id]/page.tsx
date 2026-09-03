@@ -15,10 +15,29 @@ type Device = {
   device_label: string;
   status: 'pending' | 'authorized' | 'restricted' | 'blocked';
   label: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
   first_seen: string;
   last_seen: string;
   is_active: boolean;
 };
+
+/**
+ * How this device got its current status, in plain words — so an admin
+ * doesn't have to dig through audit_logs just to see whether a device was
+ * let in automatically or by a specific person. approved_by/approved_at
+ * are only ever set by an admin decision (see the PATCH/POST routes) —
+ * an authorized device with neither is the system's own first-device
+ * auto-approval (see lib/auth.ts), never a person.
+ */
+function describeApproval(device: Device): string {
+  const verb = device.status === 'authorized' ? 'Approved' : device.status === 'blocked' ? 'Blocked' : device.status === 'restricted' ? 'Rejected' : null;
+  if (device.approved_by && verb) {
+    return `${verb} by ${device.approved_by}${device.approved_at ? ` · ${relativeTime(device.approved_at)}` : ''}`;
+  }
+  if (device.status === 'authorized') return 'First device — auto-approved on sign-up';
+  return 'Waiting for admin review';
+}
 
 type UserRow = {
   id: string;
@@ -150,6 +169,7 @@ export default function UserDevicesPage() {
               <p className="mt-0.5 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
                 {d.ip_address} · first seen {relativeTime(d.first_seen)}
               </p>
+              <p className="mt-0.5 text-xs text-ink-faint">Waiting for admin review</p>
             </div>
             <div className="flex shrink-0 gap-2">
               <button
@@ -342,6 +362,7 @@ function DeviceRow({
           <p className="mt-0.5 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
             {device.device_label} · {device.ip_address} · last seen {relativeTime(device.last_seen)}
           </p>
+          <p className="mt-0.5 text-xs text-ink-faint">{describeApproval(device)}</p>
           {history.length > 0 && (
             <button
               onClick={() => setHistoryOpen((v) => !v)}

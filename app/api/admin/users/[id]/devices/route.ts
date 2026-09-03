@@ -25,7 +25,9 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const adminClient = createSupabaseAdminClient();
   const { data: devices, error } = await adminClient
     .from('user_devices')
-    .select('id, device_id, ip_address, ip_history, device_label, status, label, first_seen, last_seen, created_at')
+    .select(
+      'id, device_id, ip_address, ip_history, device_label, status, label, approved_by, approved_at, first_seen, last_seen, created_at'
+    )
     .eq('user_id', parsedId.data)
     .order('last_seen', { ascending: false });
 
@@ -63,9 +65,17 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input.' }, { status: 400 });
 
   const adminClient = createSupabaseAdminClient();
+  // Stamp WHO made this decision — the authenticated admin from their own
+  // verified session, never the client — so the device row can show
+  // "Approved by admin@x.com" without a trip to audit_logs.
   const { data, error } = await adminClient
     .from('user_devices')
-    .update({ status: parsed.data.status, label: parsed.data.label ?? undefined })
+    .update({
+      status: parsed.data.status,
+      label: parsed.data.label ?? undefined,
+      approved_by: auth.user.email,
+      approved_at: new Date().toISOString(),
+    })
     .eq('id', parsed.data.device_id)
     .eq('user_id', parsedId.data)
     .select('id, status')
