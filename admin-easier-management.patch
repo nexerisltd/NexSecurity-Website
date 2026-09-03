@@ -1,0 +1,2225 @@
+diff --git a/app/admin/access/page.tsx b/app/admin/access/page.tsx
+new file mode 100644
+index 0000000..91bb8ba
+--- /dev/null
++++ b/app/admin/access/page.tsx
+@@ -0,0 +1,293 @@
++'use client';
++
++import Link from 'next/link';
++import { useEffect, useMemo, useState } from 'react';
++import { SearchInput } from '@/components/SearchInput';
++import { ancestorTitles, orderBoardsHierarchically, type BoardNode } from '@/lib/boardTree';
++
++type Board = {
++  id: string;
++  title: string;
++  parent_id: string | null;
++  visibility: 'universal' | 'restricted';
++};
++
++type AdminUser = { id: string; email: string; role: 'USER' | 'ADMIN' };
++
++/**
++ * The one screen for "who can see what". Everywhere else in the admin
++ * panel, access is set per-board (open a board, pick the people). Here
++ * it's per-PERSON: pick someone, see every restricted board as one
++ * checklist, flip whichever ones should change, save once. This is what
++ * replaces clicking into 6 different boards to give one teacher access
++ * to their whole section.
++ */
++export default function AdminAccessPage() {
++  const [boards, setBoards] = useState<Board[]>([]);
++  const [users, setUsers] = useState<AdminUser[]>([]);
++  const [counts, setCounts] = useState<Record<string, number>>({});
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState<string | null>(null);
++
++  const [selectedEmail, setSelectedEmail] = useState('');
++  const [userSearch, setUserSearch] = useState('');
++  const [boardSearch, setBoardSearch] = useState('');
++  const [initialGranted, setInitialGranted] = useState<Set<string>>(new Set());
++  const [checked, setChecked] = useState<Set<string>>(new Set());
++  const [loadingGrants, setLoadingGrants] = useState(false);
++  const [saving, setSaving] = useState(false);
++  const [saveResult, setSaveResult] = useState<string | null>(null);
++
++  useEffect(() => {
++    (async () => {
++      setLoading(true);
++      const [boardsRes, usersRes, summaryRes] = await Promise.all([
++        fetch('/api/admin/boards'),
++        fetch('/api/admin/users'),
++        fetch('/api/admin/access-summary'),
++      ]);
++      const boardsData = await boardsRes.json();
++      const usersData = await usersRes.json();
++      const summaryData = await summaryRes.json();
++      if (boardsRes.ok) setBoards(boardsData.boards);
++      if (usersRes.ok) setUsers((usersData.users ?? []).filter((u: AdminUser) => u.role !== 'ADMIN'));
++      if (summaryRes.ok) setCounts(summaryData.counts ?? {});
++      setLoading(false);
++    })();
++  }, []);
++
++  const ordered = useMemo(() => orderBoardsHierarchically(boards), [boards]);
++  const restrictedOrdered = useMemo(
++    () => ordered.filter((b) => b.visibility === 'restricted'),
++    [ordered]
++  );
++
++  const filteredUsers = useMemo(() => {
++    const needle = userSearch.trim().toLowerCase();
++    if (!needle) return users;
++    return users.filter((u) => u.email.toLowerCase().includes(needle));
++  }, [users, userSearch]);
++
++  const filteredRestrictedBoards = useMemo(() => {
++    const needle = boardSearch.trim().toLowerCase();
++    if (!needle) return restrictedOrdered;
++    return restrictedOrdered.filter(
++      (b) =>
++        b.title.toLowerCase().includes(needle) ||
++        ancestorTitles(boards, b.id).some((t) => t.toLowerCase().includes(needle))
++    );
++  }, [restrictedOrdered, boardSearch, boards]);
++
++  async function selectUser(email: string) {
++    setSelectedEmail(email);
++    setSaveResult(null);
++    setLoadingGrants(true);
++    const res = await fetch(`/api/admin/access-summary?email=${encodeURIComponent(email)}`);
++    const data = await res.json();
++    if (res.ok) {
++      const ids = new Set((data.grantedBoardIds ?? []) as string[]);
++      setInitialGranted(ids);
++      setChecked(new Set(ids));
++    } else {
++      setError(data.error ?? 'Could not load this user\u2019s access.');
++    }
++    setLoadingGrants(false);
++  }
++
++  function toggle(boardId: string) {
++    setChecked((prev) => {
++      const next = new Set(prev);
++      if (next.has(boardId)) next.delete(boardId);
++      else next.add(boardId);
++      return next;
++    });
++    setSaveResult(null);
++  }
++
++  const changedIds = useMemo(() => {
++    const changed: string[] = [];
++    for (const b of restrictedOrdered) {
++      if (checked.has(b.id) !== initialGranted.has(b.id)) changed.push(b.id);
++    }
++    return changed;
++  }, [checked, initialGranted, restrictedOrdered]);
++
++  async function saveChanges() {
++    if (!selectedEmail || changedIds.length === 0) return;
++    setSaving(true);
++    setError(null);
++    let done = 0;
++    try {
++      for (const boardId of changedIds) {
++        // The access endpoint replaces a board's FULL grant list, so we
++        // have to fetch its current list, add/remove just this one
++        // person, and PUT the whole thing back — never touching anyone
++        // else already granted on that board.
++        const existingRes = await fetch(`/api/admin/boards/${boardId}/access`);
++        const existingData = await existingRes.json();
++        const existingEmails: string[] = existingRes.ok ? existingData.emails ?? [] : [];
++        const willGrant = checked.has(boardId);
++        const nextEmails = willGrant
++          ? Array.from(new Set([...existingEmails, selectedEmail]))
++          : existingEmails.filter((e) => e.toLowerCase() !== selectedEmail.toLowerCase());
++        await fetch(`/api/admin/boards/${boardId}/access`, {
++          method: 'PUT',
++          headers: { 'Content-Type': 'application/json' },
++          body: JSON.stringify({ emails: nextEmails }),
++        });
++        done += 1;
++      }
++      setInitialGranted(new Set(checked));
++      setSaveResult(`Updated ${done} board${done === 1 ? '' : 's'} for ${selectedEmail}.`);
++      const summaryRes = await fetch('/api/admin/access-summary');
++      const summaryData = await summaryRes.json();
++      if (summaryRes.ok) setCounts(summaryData.counts ?? {});
++    } catch {
++      setError('Something went wrong partway through saving — please check the list and try again.');
++    }
++    setSaving(false);
++  }
++
++  return (
++    <div>
++      <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">Admin</p>
++      <h1 className="mt-2 font-display text-2xl font-semibold text-ink">Access</h1>
++      <p className="mt-2 max-w-2xl text-sm text-ink-dim">
++        Manage what one person can see across every restricted board at once — instead of opening
++        each board separately. Pick a user, tick the boards they should have, save.
++      </p>
++      <p className="mt-1 max-w-2xl text-xs text-ink-faint">
++        Admins always see every board and never appear here. If a restricted board sits inside
++        another restricted board, both need their own tick — restriction doesn&rsquo;t cascade
++        automatically.
++      </p>
++
++      {error && <p className="mt-3 text-xs text-danger">{error}</p>}
++
++      {loading ? (
++        <p className="mt-8 text-center text-sm text-ink-faint">Loading…</p>
++      ) : (
++        <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
++          <div className="rounded-xl border border-vault-border bg-vault-900 p-4 backdrop-blur-xl shadow-glass lg:max-h-[32rem] lg:overflow-y-auto">
++            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">User</p>
++            {users.length > 5 && (
++              <SearchInput
++                value={userSearch}
++                onChange={setUserSearch}
++                placeholder="Search users…"
++                className="mt-2"
++              />
++            )}
++            {users.length === 0 ? (
++              <p className="mt-3 text-xs text-ink-faint">No non-admin users yet.</p>
++            ) : (
++              <ul className="mt-2 space-y-0.5">
++                {filteredUsers.map((u) => (
++                  <li key={u.id}>
++                    <button
++                      onClick={() => selectUser(u.email)}
++                      className={`w-full truncate rounded-md px-2.5 py-1.5 text-left text-sm transition ${
++                        selectedEmail === u.email
++                          ? 'bg-signal/10 text-signal'
++                          : 'text-ink-dim hover:bg-vault-800 hover:text-ink'
++                      }`}
++                    >
++                      {u.email}
++                    </button>
++                  </li>
++                ))}
++              </ul>
++            )}
++          </div>
++
++          <div className="rounded-xl border border-vault-border bg-vault-900 p-4 backdrop-blur-xl shadow-glass">
++            {!selectedEmail ? (
++              <p className="text-sm text-ink-faint">Pick a user on the left to see and edit their board access.</p>
++            ) : restrictedOrdered.length === 0 ? (
++              <p className="text-sm text-ink-faint">No restricted boards exist yet — everything is universal.</p>
++            ) : (
++              <>
++                <div className="flex flex-wrap items-center justify-between gap-3">
++                  <p className="text-sm text-ink">
++                    Editing access for <span className="font-medium text-ink">{selectedEmail}</span>
++                  </p>
++                  {restrictedOrdered.length > 5 && (
++                    <SearchInput
++                      value={boardSearch}
++                      onChange={setBoardSearch}
++                      placeholder="Filter boards…"
++                      className="w-full sm:w-56"
++                    />
++                  )}
++                </div>
++
++                {loadingGrants ? (
++                  <p className="mt-4 text-sm text-ink-faint">Loading current access…</p>
++                ) : (
++                  <div className="mt-3 max-h-96 overflow-y-auto rounded-md border border-vault-border">
++                    {filteredRestrictedBoards.length === 0 ? (
++                      <p className="p-3 text-xs text-ink-faint">No restricted boards match.</p>
++                    ) : (
++                      filteredRestrictedBoards.map((b: BoardNode<Board>) => {
++                        const breadcrumb = ancestorTitles(boards, b.id).join(' › ');
++                        return (
++                          <label
++                            key={b.id}
++                            className="flex cursor-pointer items-center justify-between gap-3 border-b border-vault-border/60 px-3 py-2 last:border-b-0 hover:bg-vault-800/60"
++                          >
++                            <span className="flex min-w-0 items-center gap-2">
++                              <input
++                                type="checkbox"
++                                checked={checked.has(b.id)}
++                                onChange={() => toggle(b.id)}
++                                className="accent-signal"
++                              />
++                              <span className="min-w-0">
++                                {breadcrumb && (
++                                  <span className="block truncate font-mono text-[10px] uppercase tracking-widest text-ink-faint/70">
++                                    {breadcrumb}
++                                  </span>
++                                )}
++                                <span className="block truncate text-sm text-ink">{b.title}</span>
++                              </span>
++                            </span>
++                            <span className="flex shrink-0 items-center gap-2">
++                              <span className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
++                                {counts[b.id] ?? 0} total
++                              </span>
++                              <Link
++                                href={`/admin/boards?edit=${b.id}`}
++                                className="text-[10px] text-ink-faint underline decoration-dotted hover:text-signal"
++                              >
++                                manage board
++                              </Link>
++                            </span>
++                          </label>
++                        );
++                      })
++                    )}
++                  </div>
++                )}
++
++                <div className="mt-3 flex flex-wrap items-center gap-3">
++                  <button
++                    onClick={saveChanges}
++                    disabled={saving || changedIds.length === 0}
++                    className="rounded-md bg-signal px-4 py-2 text-sm font-medium text-white transition hover:bg-signal-glow disabled:opacity-50"
++                  >
++                    {saving
++                      ? 'Saving…'
++                      : changedIds.length === 0
++                        ? 'No changes'
++                        : `Save ${changedIds.length} change${changedIds.length === 1 ? '' : 's'}`}
++                  </button>
++                  {saveResult && <span className="text-xs text-ok">{saveResult}</span>}
++                </div>
++              </>
++            )}
++          </div>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/app/admin/boards/page.tsx b/app/admin/boards/page.tsx
+index 04ecaa1..ae8adf9 100644
+--- a/app/admin/boards/page.tsx
++++ b/app/admin/boards/page.tsx
+@@ -1,9 +1,19 @@
+ 'use client';
+ 
+ import { useEffect, useMemo, useState } from 'react';
++import { useSearchParams } from 'next/navigation';
+ import { ThumbnailUpload } from '@/components/ThumbnailUpload';
+ import { SearchInput } from '@/components/SearchInput';
+-import { orderBoardsHierarchically, subtreeIds, type BoardNode } from '@/lib/boardTree';
++import { Modal } from '@/components/Modal';
++import { UserMultiSelect, type SelectableUser } from '@/components/UserMultiSelect';
++import {
++  ancestorTitles,
++  buildBoardTree,
++  idsWithChildren,
++  orderBoardsHierarchically,
++  subtreeIds,
++  type BoardNode,
++} from '@/lib/boardTree';
+ 
+ type Board = {
+   id: string;
+@@ -18,13 +28,23 @@ type Board = {
+   visibility: 'universal' | 'restricted';
+ };
+ 
++type AdminUser = { email: string; role: 'USER' | 'ADMIN' };
++
+ export default function AdminBoardsPage() {
++  const searchParams = useSearchParams();
++  const openOnLoad = searchParams.get('edit');
++
+   const [boards, setBoards] = useState<Board[]>([]);
++  const [accessCounts, setAccessCounts] = useState<Record<string, number>>({});
++  const [nonAdminUsers, setNonAdminUsers] = useState<AdminUser[]>([]);
++  const [adminCount, setAdminCount] = useState(0);
+   const [loading, setLoading] = useState(true);
+   const [error, setError] = useState<string | null>(null);
+   const [busyId, setBusyId] = useState<string | null>(null);
+   const [editingId, setEditingId] = useState<string | null>(null);
+   const [search, setSearch] = useState('');
++  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
++  const [formOpen, setFormOpen] = useState(false);
+ 
+   const [title, setTitle] = useState('');
+   const [description, setDescription] = useState('');
+@@ -33,6 +53,8 @@ export default function AdminBoardsPage() {
+   const [boardType, setBoardType] = useState<'normal' | 'routine'>('normal');
+   const [routineImageUrl, setRoutineImageUrl] = useState('');
+   const [visibility, setVisibility] = useState<'universal' | 'restricted'>('universal');
++  const [newBoardAccess, setNewBoardAccess] = useState<Set<string>>(new Set());
++  const [creating, setCreating] = useState(false);
+ 
+   async function load() {
+     setLoading(true);
+@@ -42,22 +64,49 @@ export default function AdminBoardsPage() {
+     setLoading(false);
+   }
+ 
++  async function loadAccessCounts() {
++    const res = await fetch('/api/admin/access-summary');
++    const data = await res.json();
++    if (res.ok) setAccessCounts(data.counts ?? {});
++  }
++
++  async function loadUsers() {
++    const res = await fetch('/api/admin/users');
++    const data = await res.json();
++    if (res.ok) {
++      const users = (data.users ?? []) as AdminUser[];
++      setNonAdminUsers(users.filter((u) => u.role !== 'ADMIN'));
++      setAdminCount(users.filter((u) => u.role === 'ADMIN').length);
++    }
++  }
++
+   useEffect(() => {
+     load();
++    loadAccessCounts();
++    loadUsers();
+   }, []);
+ 
+-  // Top-Level (parent_id = null) first, then each board's own children
+-  // directly beneath it, depth-first — this is the "sectioned by level"
+-  // order used everywhere below: the tree view, and both parent-board
+-  // dropdowns. See lib/boardTree.ts.
++  // Deep-link support: /admin/boards?edit=<id> (used by the Access page's
++  // "manage board" links) opens straight into that board's editor instead
++  // of making the admin scroll and find + click Edit themselves.
++  useEffect(() => {
++    if (openOnLoad) setEditingId(openOnLoad);
++  }, [openOnLoad]);
++
++  const tree = useMemo(() => buildBoardTree(boards), [boards]);
+   const ordered = useMemo(() => orderBoardsHierarchically(boards), [boards]);
++  const parentIds = useMemo(() => idsWithChildren(boards), [boards]);
++  const editingBoard = useMemo(() => boards.find((b) => b.id === editingId) ?? null, [boards, editingId]);
+ 
+   // Search matches by title; a match's ancestors are kept too (even if
+   // their own title doesn't match) so the result still reads as a
+   // section — e.g. searching "physics" keeps "Class 9" visible above it.
+-  const filteredOrdered = useMemo(() => {
++  // While searching we fall back to a FLAT list with a breadcrumb on each
++  // row (see renderFlatRow below) because the nested tree view only
++  // makes sense when every ancestor is actually present to nest inside.
++  const filteredFlat = useMemo(() => {
+     const needle = search.trim().toLowerCase();
+-    if (!needle) return ordered;
++    if (!needle) return [];
+     const byId = new Map(boards.map((b) => [b.id, b]));
+     const keep = new Set<string>();
+     for (const b of ordered) {
+@@ -72,9 +121,21 @@ export default function AdminBoardsPage() {
+     return ordered.filter((b) => keep.has(b.id));
+   }, [ordered, search, boards]);
+ 
++  const isSearching = search.trim().length > 0;
++
++  function toggleCollapsed(id: string) {
++    setCollapsedIds((prev) => {
++      const next = new Set(prev);
++      if (next.has(id)) next.delete(id);
++      else next.add(id);
++      return next;
++    });
++  }
++
+   async function createBoard(e: React.FormEvent) {
+     e.preventDefault();
+     setError(null);
++    setCreating(true);
+     const res = await fetch('/api/admin/boards', {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+@@ -93,8 +154,21 @@ export default function AdminBoardsPage() {
+     const data = await res.json();
+     if (!res.ok) {
+       setError(data.error ?? 'Could not create board.');
++      setCreating(false);
+       return;
+     }
++    // Access can be set right here at creation time instead of forcing a
++    // second trip through Edit — the board only exists once this POST
++    // resolves, so the grant list is applied as an immediate follow-up
++    // PUT using the id we just got back.
++    if (visibility === 'restricted' && newBoardAccess.size > 0 && data.board?.id) {
++      await fetch(`/api/admin/boards/${data.board.id}/access`, {
++        method: 'PUT',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ emails: Array.from(newBoardAccess) }),
++      });
++      loadAccessCounts();
++    }
+     setTitle('');
+     setDescription('');
+     setThumbnailUrl('');
+@@ -102,20 +176,29 @@ export default function AdminBoardsPage() {
+     setBoardType('normal');
+     setRoutineImageUrl('');
+     setVisibility('universal');
++    setNewBoardAccess(new Set());
++    setFormOpen(false);
++    setCreating(false);
+     load();
+   }
+ 
+   async function togglePublished(board: Board) {
+     setBusyId(board.id);
++    // Optimistic: flip it in place immediately instead of waiting on a
++    // full reload — the request still runs, it just doesn't block the
++    // click from feeling instant.
++    setBoards((prev) => prev.map((b) => (b.id === board.id ? { ...b, published: !b.published } : b)));
+     const res = await fetch(`/api/admin/boards/${board.id}`, {
+       method: 'PATCH',
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify({ published: !board.published }),
+     });
+     const data = await res.json();
+-    if (!res.ok) setError(data.error ?? 'Could not update board.');
++    if (!res.ok) {
++      setError(data.error ?? 'Could not update board.');
++      setBoards((prev) => prev.map((b) => (b.id === board.id ? { ...b, published: board.published } : b)));
++    }
+     setBusyId(null);
+-    load();
+   }
+ 
+   async function removeBoard(id: string) {
+@@ -128,177 +211,229 @@ export default function AdminBoardsPage() {
+     load();
+   }
+ 
++  function renderRow(node: BoardNode<Board>, opts: { breadcrumb?: string } = {}) {
++    const hasChildren = parentIds.has(node.id);
++    const isCollapsed = collapsedIds.has(node.id);
++    const accessCount = accessCounts[node.id] ?? 0;
++
++    return (
++      <div key={node.id} className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass">
++        <div className="flex items-center justify-between gap-3 px-4 py-3">
++          <div className="flex min-w-0 items-center gap-2">
++            {hasChildren ? (
++              <button
++                onClick={() => toggleCollapsed(node.id)}
++                aria-label={isCollapsed ? 'Expand' : 'Collapse'}
++                className="shrink-0 rounded p-0.5 text-ink-faint transition hover:text-ink"
++              >
++                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className={`transition-transform ${isCollapsed ? '-rotate-90' : ''}`}>
++                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
++                </svg>
++              </button>
++            ) : (
++              <span className="w-3.5 shrink-0" aria-hidden="true" />
++            )}
++            <div className="min-w-0">
++              {opts.breadcrumb && (
++                <p className="truncate font-mono text-[10px] uppercase tracking-widest text-ink-faint/70">{opts.breadcrumb}</p>
++              )}
++              <p className="truncate text-sm text-ink">{node.title}</p>
++              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
++                {node.depth === 0 ? 'Top-Level' : `Sub-Level · depth ${node.depth}`} ·{' '}
++                <span className={node.published ? 'text-ok' : 'text-warn'}>{node.published ? 'Published' : 'Draft'}</span>
++                {node.visibility === 'restricted' && (
++                  <>
++                    {' '}
++                    · <span className="text-signal-glow">Restricted · {accessCount} user{accessCount === 1 ? '' : 's'}</span>
++                  </>
++                )}
++              </p>
++            </div>
++          </div>
++          <div className="flex shrink-0 gap-2">
++            <button
++              disabled={busyId === node.id}
++              onClick={() => togglePublished(node)}
++              className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
++            >
++              {node.published ? 'Unpublish' : 'Publish'}
++            </button>
++            <button
++              onClick={() => setEditingId(node.id)}
++              className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
++            >
++              Edit
++            </button>
++            <button
++              disabled={busyId === node.id}
++              onClick={() => removeBoard(node.id)}
++              className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
++            >
++              Delete
++            </button>
++          </div>
++        </div>
++
++        {/* Children render NESTED INSIDE their parent's card — an actual
++            folder-tree shape — instead of a flat list where the only clue
++            to nesting was indentation plus a repeated breadcrumb line on
++            every single row. */}
++        {hasChildren && !isCollapsed && (
++          <div className="space-y-2 border-t border-vault-border bg-black/20 p-2 pl-5">
++            {node.children.map((child) => renderRow(child))}
++          </div>
++        )}
++      </div>
++    );
++  }
++
+   return (
+     <div>
+       <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">Admin</p>
+-      <h1 className="mt-2 font-display text-2xl font-semibold text-ink">Boards</h1>
+-      <p className="mt-2 max-w-2xl text-sm text-ink-dim">
+-        Create top-level boards (leave parent empty) or nest one inside another — including
+-        inside a board you already nested (e.g. Top-Level → Physics → Chapter 1). Click{' '}
+-        <strong className="text-ink">Edit</strong> on an existing board to update its title,
+-        description, thumbnail, or parent.
+-      </p>
+-
+-      <form
+-        onSubmit={createBoard}
+-        className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 sm:grid-cols-2 backdrop-blur-xl shadow-glass"
+-      >
+-        <Field label="Title">
+-          <input
+-            required
+-            value={title}
+-            onChange={(e) => setTitle(e.target.value)}
+-            className="input"
+-          />
+-        </Field>
+-        <Field label="Parent board (optional)">
+-          <ParentBoardSelect value={parentId} onChange={setParentId} options={ordered} />
+-        </Field>
+-        <div className="sm:col-span-2">
+-          <Field label="Thumbnail">
+-            <ThumbnailUpload value={thumbnailUrl} onChange={setThumbnailUrl} />
+-          </Field>
+-        </div>
+-        <Field label="Description">
+-          <input
+-            value={description}
+-            onChange={(e) => setDescription(e.target.value)}
+-            className="input"
+-          />
+-        </Field>
+-        <Field label="Board type">
+-          <select
+-            value={boardType}
+-            onChange={(e) => setBoardType(e.target.value as 'normal' | 'routine')}
+-            className="input"
+-          >
+-            <option value="normal">Normal (boards / classes)</option>
+-            <option value="routine">Routine (just an image)</option>
+-          </select>
+-        </Field>
+-        <Field label="Visibility">
+-          <select
+-            value={visibility}
+-            onChange={(e) => setVisibility(e.target.value as 'universal' | 'restricted')}
+-            className="input"
+-          >
+-            <option value="universal">Universal — everyone can see it</option>
+-            <option value="restricted">Restricted — only selected users</option>
+-          </select>
+-        </Field>
+-        {visibility === 'restricted' && (
++      <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
++        <h1 className="font-display text-2xl font-semibold text-ink">Boards</h1>
++        <button
++          onClick={() => setFormOpen((v) => !v)}
++          className="rounded-md border border-vault-border px-3 py-1.5 text-xs font-medium text-ink-dim transition hover:border-signal hover:text-ink"
++        >
++          {formOpen ? 'Close' : '+ New board'}
++        </button>
++      </div>
++
++      {formOpen && (
++        <form
++          onSubmit={createBoard}
++          className="mt-4 grid grid-cols-1 gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 sm:grid-cols-2 backdrop-blur-xl shadow-glass"
++        >
+           <p className="sm:col-span-2 text-xs text-ink-faint">
+-            Create the board first, then use <strong className="text-ink">Edit</strong> to pick which users can
+-            see it.
++            Create top-level boards (leave parent empty) or nest one inside another — including
++            inside a board you already nested (e.g. Top-Level → Physics → Chapter 1).
+           </p>
+-        )}
+-        {boardType === 'routine' && (
++          <Field label="Title">
++            <input required value={title} onChange={(e) => setTitle(e.target.value)} className="input" />
++          </Field>
++          <Field label="Parent board (optional)">
++            <ParentBoardSelect value={parentId} onChange={setParentId} options={ordered} />
++          </Field>
+           <div className="sm:col-span-2">
+-            <Field label="Routine image (16:9 — this IS the routine)">
+-              <ThumbnailUpload value={routineImageUrl} onChange={setRoutineImageUrl} />
++            <Field label="Thumbnail">
++              <ThumbnailUpload value={thumbnailUrl} onChange={setThumbnailUrl} />
+             </Field>
+           </div>
+-        )}
+-        <div className="sm:col-span-2">
+-          <button
+-            type="submit"
+-            className="rounded-md bg-signal px-4 py-2 text-sm font-medium text-white transition hover:bg-signal-glow"
+-          >
+-            Create board (unpublished)
+-          </button>
+-        </div>
+-      </form>
++          <Field label="Description">
++            <input value={description} onChange={(e) => setDescription(e.target.value)} className="input" />
++          </Field>
++          <Field label="Board type">
++            <select value={boardType} onChange={(e) => setBoardType(e.target.value as 'normal' | 'routine')} className="input">
++              <option value="normal">Normal (boards / classes)</option>
++              <option value="routine">Routine (just an image)</option>
++            </select>
++          </Field>
++          <Field label="Visibility">
++            <select value={visibility} onChange={(e) => setVisibility(e.target.value as 'universal' | 'restricted')} className="input">
++              <option value="universal">Universal — everyone can see it</option>
++              <option value="restricted">Restricted — only selected users</option>
++            </select>
++          </Field>
++          {visibility === 'restricted' && (
++            <div className="sm:col-span-2">
++              <Field label="Who can see this board (optional — you can also do this later from Edit)">
++                <UserMultiSelect
++                  users={nonAdminUsers as SelectableUser[]}
++                  selected={newBoardAccess}
++                  onChange={setNewBoardAccess}
++                  emptyLabel="No non-admin users to grant access to yet."
++                />
++              </Field>
++              <p className="mt-1 text-xs text-ink-faint">
++                {adminCount > 0
++                  ? `${adminCount} admin${adminCount === 1 ? '' : 's'} not shown — admins always have access to every board.`
++                  : 'Admins always have access to every board.'}
++              </p>
++            </div>
++          )}
++          {boardType === 'routine' && (
++            <div className="sm:col-span-2">
++              <Field label="Routine image (16:9 — this IS the routine)">
++                <ThumbnailUpload value={routineImageUrl} onChange={setRoutineImageUrl} />
++              </Field>
++            </div>
++          )}
++          <div className="sm:col-span-2">
++            <button
++              type="submit"
++              disabled={creating}
++              className="rounded-md bg-signal px-4 py-2 text-sm font-medium text-white transition hover:bg-signal-glow disabled:opacity-60"
++            >
++              {creating ? 'Creating…' : 'Create board (unpublished)'}
++            </button>
++          </div>
++        </form>
++      )}
+ 
+       {error && <p className="mt-3 text-xs text-danger">{error}</p>}
+ 
+       <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
+-        <h2 className="font-mono text-[11px] uppercase tracking-widest text-ink-faint">
+-          All boards, by section
+-        </h2>
+-        {boards.length > 5 && (
+-          <SearchInput
+-            value={search}
+-            onChange={setSearch}
+-            placeholder="Search boards…"
+-            className="w-full sm:w-64"
+-          />
+-        )}
++        <h2 className="font-mono text-[11px] uppercase tracking-widest text-ink-faint">All boards, by section</h2>
++        <div className="flex flex-wrap items-center gap-2">
++          {parentIds.size > 0 && !isSearching && (
++            <>
++              <button
++                onClick={() => setCollapsedIds(new Set())}
++                className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
++              >
++                Expand all
++              </button>
++              <button
++                onClick={() => setCollapsedIds(new Set(parentIds))}
++                className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
++              >
++                Collapse all
++              </button>
++            </>
++          )}
++          {boards.length > 5 && (
++            <SearchInput value={search} onChange={setSearch} placeholder="Search boards…" className="w-full sm:w-64" />
++          )}
++        </div>
+       </div>
+ 
+       <div className="mt-3 space-y-2">
+         {loading ? (
+           <p className="text-center text-sm text-ink-faint">Loading…</p>
+         ) : boards.length === 0 ? (
+-          <p className="rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
+-            No boards yet.
+-          </p>
+-        ) : filteredOrdered.length === 0 ? (
+-          <p className="rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
+-            No boards match &ldquo;{search}&rdquo;.
+-          </p>
+-        ) : (
+-          filteredOrdered.map((b) => (
+-            <div
+-              key={b.id}
+-              style={{ marginLeft: b.depth * 24 }}
+-              className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass"
+-            >
+-              <div className="flex items-center justify-between px-4 py-3">
+-                <div className="flex min-w-0 items-center gap-2">
+-                  {b.depth > 0 && <span className="shrink-0 text-ink-faint">↳</span>}
+-                  <div className="min-w-0">
+-                    <p className="truncate text-sm text-ink">{b.title}</p>
+-                    <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+-                      {b.depth === 0 ? 'Top-Level' : `Sub-Level · depth ${b.depth}`} ·{' '}
+-                      <span className={b.published ? 'text-ok' : 'text-warn'}>
+-                        {b.published ? 'Published' : 'Draft'}
+-                      </span>
+-                      {b.visibility === 'restricted' && (
+-                        <>
+-                          {' '}
+-                          · <span className="text-signal-glow">Restricted</span>
+-                        </>
+-                      )}
+-                    </p>
+-                  </div>
+-                </div>
+-                <div className="flex shrink-0 gap-2">
+-                  <button
+-                    disabled={busyId === b.id}
+-                    onClick={() => togglePublished(b)}
+-                    className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
+-                  >
+-                    {b.published ? 'Unpublish' : 'Publish'}
+-                  </button>
+-                  <button
+-                    onClick={() => setEditingId(editingId === b.id ? null : b.id)}
+-                    className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+-                  >
+-                    {editingId === b.id ? 'Close' : 'Edit'}
+-                  </button>
+-                  <button
+-                    disabled={busyId === b.id}
+-                    onClick={() => removeBoard(b.id)}
+-                    className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+-                  >
+-                    Delete
+-                  </button>
+-                </div>
++          <p className="rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">No boards yet.</p>
++        ) : isSearching ? (
++          filteredFlat.length === 0 ? (
++            <p className="rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
++              No boards match &ldquo;{search}&rdquo;.
++            </p>
++          ) : (
++            filteredFlat.map((b) => (
++              <div key={b.id} style={{ marginLeft: b.depth * 20 }}>
++                {renderRow({ ...b, children: [] }, { breadcrumb: b.depth > 0 ? ancestorTitles(boards, b.id).join(' › ') : undefined })}
+               </div>
+-
+-              {editingId === b.id && (
+-                <BoardEditPanel
+-                  board={b}
+-                  boards={boards}
+-                  ordered={ordered}
+-                  onSaved={load}
+-                  onError={setError}
+-                />
+-              )}
+-            </div>
+-          ))
++            ))
++          )
++        ) : (
++          tree.map((node) => renderRow(node))
+         )}
+       </div>
++
++      {editingBoard && (
++        <Modal title={`Edit "${editingBoard.title}"`} subtitle="Boards" onClose={() => setEditingId(null)} wide>
++          <BoardEditPanel
++            board={editingBoard}
++            boards={boards}
++            ordered={ordered}
++            onSaved={() => {
++              load();
++              loadAccessCounts();
++            }}
++            onError={setError}
++          />
++        </Modal>
++      )}
+     </div>
+   );
+ }
+@@ -382,10 +517,7 @@ function BoardEditPanel({
+   }
+ 
+   return (
+-    <form
+-      onSubmit={save}
+-      className="grid grid-cols-1 gap-3 border-t border-vault-border bg-vault-800/50 p-5 sm:grid-cols-2"
+-    >
++    <form onSubmit={save} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+       <Field label="Title">
+         <input required value={title} onChange={(e) => setTitle(e.target.value)} className="input" />
+       </Field>
+@@ -399,29 +531,17 @@ function BoardEditPanel({
+       </div>
+       <div className="sm:col-span-2">
+         <Field label="Description">
+-          <input
+-            value={description}
+-            onChange={(e) => setDescription(e.target.value)}
+-            className="input"
+-          />
++          <input value={description} onChange={(e) => setDescription(e.target.value)} className="input" />
+         </Field>
+       </div>
+       <Field label="Board type">
+-        <select
+-          value={boardType}
+-          onChange={(e) => setBoardType(e.target.value as 'normal' | 'routine')}
+-          className="input"
+-        >
++        <select value={boardType} onChange={(e) => setBoardType(e.target.value as 'normal' | 'routine')} className="input">
+           <option value="normal">Normal (boards / classes)</option>
+           <option value="routine">Routine (just an image)</option>
+         </select>
+       </Field>
+       <Field label="Visibility">
+-        <select
+-          value={visibility}
+-          onChange={(e) => setVisibility(e.target.value as 'universal' | 'restricted')}
+-          className="input"
+-        >
++        <select value={visibility} onChange={(e) => setVisibility(e.target.value as 'universal' | 'restricted')} className="input">
+           <option value="universal">Universal — everyone can see it</option>
+           <option value="restricted">Restricted — only selected users</option>
+         </select>
+@@ -436,7 +556,7 @@ function BoardEditPanel({
+       {visibility === 'restricted' && (
+         <div className="sm:col-span-2">
+           <Field label="Who can see this board (and everything nested under it)">
+-            <BoardAccessPicker boardId={board.id} onError={onError} />
++            <BoardAccessPicker boardId={board.id} boards={boards} onError={onError} />
+           </Field>
+         </div>
+       )}
+@@ -456,29 +576,59 @@ function BoardEditPanel({
+ /**
+  * Manages board_user_access for one 'restricted' board — separate from
+  * the main save button above (its own fetch, its own save action)
+- * because the grant list is a different table/endpoint entirely, and
+- * doing it as its own small form avoids losing the rest of the edit
+- * form's state if this call fails independently.
++ * because the grant list is a different table/endpoint entirely.
++ *
++ * ADMIN-role accounts are left out of this checklist entirely — the
++ * backend already lets every admin see every board regardless of any
++ * grant (see lib/boardAccess.ts), so listing them here as if they also
++ * needed picking was pure noise.
+  */
+-function BoardAccessPicker({ boardId, onError }: { boardId: string; onError: (msg: string) => void }) {
+-  const [allUsers, setAllUsers] = useState<{ email: string }[]>([]);
++function BoardAccessPicker({
++  boardId,
++  boards,
++  onError,
++}: {
++  boardId: string;
++  boards: Board[];
++  onError: (msg: string) => void;
++}) {
++  const [allUsers, setAllUsers] = useState<AdminUser[]>([]);
++  const [adminCount, setAdminCount] = useState(0);
+   const [granted, setGranted] = useState<Set<string>>(new Set());
+   const [loading, setLoading] = useState(true);
+   const [saving, setSaving] = useState(false);
+   const [savedOnce, setSavedOnce] = useState(false);
++  const [copyFromId, setCopyFromId] = useState('');
++  const [applyingToSubBoards, setApplyingToSubBoards] = useState(false);
++  const [applyResult, setApplyResult] = useState<string | null>(null);
++
++  const otherRestrictedBoards = useMemo(
++    () => boards.filter((b) => b.visibility === 'restricted' && b.id !== boardId),
++    [boards, boardId]
++  );
++  const restrictedDescendantIds = useMemo(
++    () =>
++      Array.from(subtreeIds(boards, boardId)).filter((id) => {
++        if (id === boardId) return false;
++        const b = boards.find((bb) => bb.id === id);
++        return b?.visibility === 'restricted';
++      }),
++    [boards, boardId]
++  );
+ 
+   useEffect(() => {
+     let cancelled = false;
+     (async () => {
+       setLoading(true);
+-      const [usersRes, accessRes] = await Promise.all([
+-        fetch('/api/admin/users'),
+-        fetch(`/api/admin/boards/${boardId}/access`),
+-      ]);
++      const [usersRes, accessRes] = await Promise.all([fetch('/api/admin/users'), fetch(`/api/admin/boards/${boardId}/access`)]);
+       const usersData = await usersRes.json();
+       const accessData = await accessRes.json();
+       if (cancelled) return;
+-      if (usersRes.ok) setAllUsers(usersData.users ?? []);
++      if (usersRes.ok) {
++        const users = (usersData.users ?? []) as AdminUser[];
++        setAllUsers(users.filter((u) => u.role !== 'ADMIN'));
++        setAdminCount(users.filter((u) => u.role === 'ADMIN').length);
++      }
+       if (accessRes.ok) setGranted(new Set((accessData.emails ?? []) as string[]));
+       setLoading(false);
+     })();
+@@ -487,13 +637,15 @@ function BoardAccessPicker({ boardId, onError }: { boardId: string; onError: (ms
+     };
+   }, [boardId]);
+ 
+-  function toggle(email: string) {
+-    setGranted((prev) => {
+-      const next = new Set(prev);
+-      if (next.has(email)) next.delete(email);
+-      else next.add(email);
+-      return next;
+-    });
++  async function copyFrom(otherBoardId: string) {
++    if (!otherBoardId) return;
++    const res = await fetch(`/api/admin/boards/${otherBoardId}/access`);
++    const data = await res.json();
++    if (!res.ok) {
++      onError(data.error ?? 'Could not load that board\u2019s access list.');
++      return;
++    }
++    setGranted((prev) => new Set([...prev, ...((data.emails ?? []) as string[])]));
+     setSavedOnce(false);
+   }
+ 
+@@ -510,28 +662,60 @@ function BoardAccessPicker({ boardId, onError }: { boardId: string; onError: (ms
+     setSaving(false);
+   }
+ 
++  // Additive only, on purpose: this ADDS the currently-checked people to
++  // every restricted board nested under this one, without touching
++  // anyone already granted there.
++  async function applyToSubBoards() {
++    if (restrictedDescendantIds.length === 0 || granted.size === 0) return;
++    setApplyingToSubBoards(true);
++    setApplyResult(null);
++    try {
++      for (const id of restrictedDescendantIds) {
++        const existingRes = await fetch(`/api/admin/boards/${id}/access`);
++        const existingData = await existingRes.json();
++        const existingEmails: string[] = existingRes.ok ? existingData.emails ?? [] : [];
++        const merged = Array.from(new Set([...existingEmails, ...Array.from(granted)]));
++        await fetch(`/api/admin/boards/${id}/access`, {
++          method: 'PUT',
++          headers: { 'Content-Type': 'application/json' },
++          body: JSON.stringify({ emails: merged }),
++        });
++      }
++      setApplyResult(`Added to ${restrictedDescendantIds.length} nested restricted board${restrictedDescendantIds.length === 1 ? '' : 's'}.`);
++    } catch {
++      onError('Could not apply access to every nested board — some may not have updated.');
++    }
++    setApplyingToSubBoards(false);
++  }
++
+   if (loading) return <p className="text-xs text-ink-faint">Loading users…</p>;
+-  if (allUsers.length === 0) return <p className="text-xs text-ink-faint">No users to grant access to yet.</p>;
+ 
+   return (
+     <div>
+-      <div className="max-h-48 overflow-y-auto rounded-md border border-vault-border bg-vault-900 p-2">
+-        {allUsers.map((u) => (
+-          <label
+-            key={u.email}
+-            className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-ink hover:bg-vault-800/60"
+-          >
+-            <input
+-              type="checkbox"
+-              checked={granted.has(u.email)}
+-              onChange={() => toggle(u.email)}
+-              className="accent-signal"
+-            />
+-            <span className="truncate">{u.email}</span>
+-          </label>
+-        ))}
+-      </div>
+-      <div className="mt-2 flex items-center gap-3">
++      {otherRestrictedBoards.length > 0 && (
++        <select
++          value={copyFromId}
++          onChange={(e) => {
++            copyFrom(e.target.value);
++            setCopyFromId('');
++          }}
++          className="input mb-2 !w-auto text-[11px]"
++        >
++          <option value="">Copy access from…</option>
++          {otherRestrictedBoards.map((b) => (
++            <option key={b.id} value={b.id}>
++              {b.title}
++            </option>
++          ))}
++        </select>
++      )}
++      <UserMultiSelect users={allUsers} selected={granted} onChange={setGranted} emptyLabel="No non-admin users to grant access to yet." />
++      {adminCount > 0 && (
++        <p className="mt-1.5 text-xs text-ink-faint">
++          {adminCount} admin{adminCount === 1 ? '' : 's'} not shown — admins always have access to every board.
++        </p>
++      )}
++      <div className="mt-2 flex flex-wrap items-center gap-3">
+         <button
+           type="button"
+           onClick={saveAccess}
+@@ -540,10 +724,25 @@ function BoardAccessPicker({ boardId, onError }: { boardId: string; onError: (ms
+         >
+           {saving ? 'Saving access…' : 'Save access list'}
+         </button>
+-        <span className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+-          {granted.size} of {allUsers.length} selected{savedOnce ? ' · saved' : ''}
+-        </span>
++        {savedOnce && <span className="font-mono text-[10px] uppercase tracking-widest text-ok">saved</span>}
+       </div>
++      {restrictedDescendantIds.length > 0 && (
++        <div className="mt-3 rounded-md border border-vault-border/60 bg-vault-900/40 p-2.5">
++          <p className="text-xs text-ink-dim">
++            This board has {restrictedDescendantIds.length} restricted board{restrictedDescendantIds.length === 1 ? '' : 's'} nested
++            under it. Access doesn&rsquo;t cascade automatically — each one needs its own grant.
++          </p>
++          <button
++            type="button"
++            onClick={applyToSubBoards}
++            disabled={applyingToSubBoards || granted.size === 0}
++            className="mt-1.5 rounded-md border border-signal/30 bg-signal/10 px-2.5 py-1 text-[11px] font-medium text-signal transition hover:bg-signal/20 disabled:opacity-50"
++          >
++            {applyingToSubBoards ? 'Applying…' : `Also add the ${granted.size} selected user${granted.size === 1 ? '' : 's'} to those`}
++          </button>
++          {applyResult && <p className="mt-1 text-xs text-ok">{applyResult}</p>}
++        </div>
++      )}
+     </div>
+   );
+ }
+@@ -551,9 +750,7 @@ function BoardAccessPicker({ boardId, onError }: { boardId: string; onError: (ms
+ function Field({ label, children }: { label: string; children: React.ReactNode }) {
+   return (
+     <label className="block">
+-      <span className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+-        {label}
+-      </span>
++      <span className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">{label}</span>
+       <div className="mt-1">{children}</div>
+     </label>
+   );
+diff --git a/app/admin/ebooks/page.tsx b/app/admin/ebooks/page.tsx
+index e78f38a..e3f47a3 100644
+--- a/app/admin/ebooks/page.tsx
++++ b/app/admin/ebooks/page.tsx
+@@ -1,11 +1,19 @@
+ 'use client';
+ 
++import Link from 'next/link';
+ import { useEffect, useMemo, useState } from 'react';
+ import { ThumbnailUpload } from '@/components/ThumbnailUpload';
+ import { SearchInput } from '@/components/SearchInput';
++import { Modal } from '@/components/Modal';
+ import { orderBoardsHierarchically } from '@/lib/boardTree';
+ 
+-type Board = { id: string; title: string; parent_id: string | null; sort_order: number };
++type Board = {
++  id: string;
++  title: string;
++  parent_id: string | null;
++  sort_order: number;
++  visibility?: 'universal' | 'restricted';
++};
+ 
+ type EBook = {
+   id: string;
+@@ -40,6 +48,7 @@ export default function AdminEBooksPage() {
+   const [search, setSearch] = useState('');
+ 
+   const orderedBoards = useMemo(() => orderBoardsHierarchically(boards), [boards]);
++  const editingEbook = useMemo(() => ebooks.find((eb) => eb.id === editingId) ?? null, [ebooks, editingId]);
+ 
+   const filteredEbooks = useMemo(() => {
+     const needle = search.trim().toLowerCase();
+@@ -241,21 +250,157 @@ export default function AdminEBooksPage() {
+                   </p>
+                 </div>
+               </div>
+-              <button
+-                disabled={busyId === eb.id}
+-                onClick={() => removeEBook(eb.id)}
+-                className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+-              >
+-                Delete
+-              </button>
++              <div className="flex shrink-0 gap-2">
++                <button
++                  onClick={() => setEditingId(eb.id)}
++                  className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
++                >
++                  Edit
++                </button>
++                <button
++                  disabled={busyId === eb.id}
++                  onClick={() => removeEBook(eb.id)}
++                  className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
++                >
++                  Delete
++                </button>
++              </div>
+             </div>
+           ))
+         )}
+       </div>
++
++      {editingEbook && (
++        <Modal title={`Edit "${editingEbook.title}"`} subtitle="E-Books" onClose={() => setEditingId(null)} wide>
++          <EBookEditPanel ebook={editingEbook} boards={boards} onSaved={load} onError={setError} onDone={() => setEditingId(null)} />
++        </Modal>
++      )}
+     </div>
+   );
+ }
+ 
++function EBookEditPanel({
++  ebook,
++  boards,
++  onSaved,
++  onError,
++  onDone,
++}: {
++  ebook: EBook;
++  boards: Board[];
++  onSaved: () => void;
++  onError: (msg: string) => void;
++  onDone: () => void;
++}) {
++  const [title, setTitle] = useState(ebook.title);
++  const [boardId, setBoardId] = useState(ebook.board_id);
++  const [thumbnailUrl, setThumbnailUrl] = useState(ebook.thumbnail_url ?? '');
++  const [downloadUrl, setDownloadUrl] = useState(ebook.download_url ?? '');
++  const [format, setFormat] = useState(ebook.format);
++  const [price, setPrice] = useState(String(ebook.price));
++  const [description, setDescription] = useState(ebook.description ?? '');
++  const [saving, setSaving] = useState(false);
++
++  const orderedBoards = useMemo(() => orderBoardsHierarchically(boards), [boards]);
++  const currentBoard = useMemo(() => boards.find((b) => b.id === boardId), [boards, boardId]);
++
++  async function save(e: React.FormEvent) {
++    e.preventDefault();
++    setSaving(true);
++    const res = await fetch(`/api/admin/ebooks/${ebook.id}`, {
++      method: 'PATCH',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({
++        title,
++        board_id: boardId,
++        thumbnail_url: thumbnailUrl || null,
++        download_url: downloadUrl || null,
++        format,
++        price: Number(price) || 0,
++        description: description || null,
++      }),
++    });
++    const data = await res.json();
++    if (!res.ok) {
++      onError(data.error ?? 'Could not update e-book.');
++      setSaving(false);
++      return;
++    }
++    setSaving(false);
++    onSaved();
++    onDone();
++  }
++
++  return (
++    <form onSubmit={save} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
++      <Field label="Title">
++        <input required value={title} onChange={(e) => setTitle(e.target.value)} className="input" />
++      </Field>
++      <Field label="Board">
++        <select required value={boardId} onChange={(e) => setBoardId(e.target.value)} className="input">
++          {orderedBoards.map((b) => (
++            <option key={b.id} value={b.id}>
++              {'—'.repeat(b.depth)}
++              {b.depth > 0 ? ' ' : ''}
++              {b.title}
++            </option>
++          ))}
++        </select>
++        {/* E-books don't have their own access list — same as classes,
++            who can see it follows the board it's attached to. */}
++        <p className="mt-1 text-xs text-ink-faint">
++          {currentBoard?.visibility === 'restricted' ? (
++            <>
++              Restricted — access is managed on the board, not the e-book.{' '}
++              <Link href="/admin/access" className="underline decoration-dotted hover:text-signal">
++                Manage who can see it
++              </Link>
++            </>
++          ) : (
++            'Universal — visible to every authorized user, via this board.'
++          )}
++        </p>
++      </Field>
++      <div className="sm:col-span-2">
++        <Field label="Thumbnail (portrait, 3:4)">
++          <ThumbnailUpload value={thumbnailUrl} onChange={setThumbnailUrl} />
++        </Field>
++      </div>
++      <Field label="Download link (optional, https)">
++        <input value={downloadUrl} onChange={(e) => setDownloadUrl(e.target.value)} placeholder="https://..." className="input" />
++      </Field>
++      <div className="grid grid-cols-2 gap-3">
++        <Field label="Format">
++          <select value={format} onChange={(e) => setFormat(e.target.value)} className="input">
++            {FORMATS.map((f) => (
++              <option key={f} value={f}>
++                {f}
++              </option>
++            ))}
++          </select>
++        </Field>
++        <Field label="Price (0 = Free)">
++          <input type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} className="input" />
++        </Field>
++      </div>
++      <div className="sm:col-span-2">
++        <Field label="Description">
++          <input value={description} onChange={(e) => setDescription(e.target.value)} className="input" />
++        </Field>
++      </div>
++      <div className="sm:col-span-2">
++        <button
++          type="submit"
++          disabled={saving}
++          className="rounded-md bg-signal px-4 py-2 text-sm font-medium text-white transition hover:bg-signal-glow disabled:opacity-60"
++        >
++          {saving ? 'Saving…' : 'Save changes'}
++        </button>
++      </div>
++    </form>
++  );
++}
++
+ function Field({ label, children }: { label: string; children: React.ReactNode }) {
+   return (
+     <label className="block">
+diff --git a/app/admin/users/page.tsx b/app/admin/users/page.tsx
+index 6952896..63b42a7 100644
+--- a/app/admin/users/page.tsx
++++ b/app/admin/users/page.tsx
+@@ -3,6 +3,9 @@
+ import Link from 'next/link';
+ import { useEffect, useMemo, useState } from 'react';
+ import { SearchInput } from '@/components/SearchInput';
++import { Modal } from '@/components/Modal';
++import { BoardMultiSelect } from '@/components/BoardMultiSelect';
++import { orderBoardsHierarchically } from '@/lib/boardTree';
+ 
+ type AuthorizedUser = {
+   id: string;
+@@ -13,13 +16,19 @@ type AuthorizedUser = {
+   created_at: string;
+ };
+ 
++type Board = { id: string; title: string; parent_id: string | null; visibility: 'universal' | 'restricted' };
++
+ export default function AdminUsersPage() {
+   const [users, setUsers] = useState<AuthorizedUser[]>([]);
++  const [boards, setBoards] = useState<Board[]>([]);
+   const [loading, setLoading] = useState(true);
+   const [newEmail, setNewEmail] = useState('');
+   const [newRole, setNewRole] = useState<'USER' | 'ADMIN'>('USER');
++  const [newUserAccess, setNewUserAccess] = useState<Set<string>>(new Set());
++  const [adding, setAdding] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+   const [busyId, setBusyId] = useState<string | null>(null);
++  const [editingId, setEditingId] = useState<string | null>(null);
+   const [enforcing, setEnforcing] = useState(false);
+   const [enforceResult, setEnforceResult] = useState<string | null>(null);
+   const [search, setSearch] = useState('');
+@@ -30,11 +39,20 @@ export default function AdminUsersPage() {
+     return users.filter((u) => u.email.toLowerCase().includes(needle));
+   }, [users, search]);
+ 
++  const restrictedOrdered = useMemo(
++    () => orderBoardsHierarchically(boards).filter((b) => b.visibility === 'restricted'),
++    [boards]
++  );
++
++  const editingUser = useMemo(() => users.find((u) => u.id === editingId) ?? null, [users, editingId]);
++
+   async function load() {
+     setLoading(true);
+-    const res = await fetch('/api/admin/users');
+-    const data = await res.json();
+-    if (res.ok) setUsers(data.users);
++    const [usersRes, boardsRes] = await Promise.all([fetch('/api/admin/users'), fetch('/api/admin/boards')]);
++    const usersData = await usersRes.json();
++    const boardsData = await boardsRes.json();
++    if (usersRes.ok) setUsers(usersData.users);
++    if (boardsRes.ok) setBoards(boardsData.boards);
+     setLoading(false);
+   }
+ 
+@@ -45,6 +63,7 @@ export default function AdminUsersPage() {
+   async function addUser(e: React.FormEvent) {
+     e.preventDefault();
+     setError(null);
++    setAdding(true);
+     const res = await fetch('/api/admin/users', {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+@@ -53,14 +72,33 @@ export default function AdminUsersPage() {
+     const data = await res.json();
+     if (!res.ok) {
+       setError(data.error ?? 'Could not add user.');
++      setAdding(false);
+       return;
+     }
++    // Board access can be defined right here at creation time — no need
++    // to save the user first, then separately open every restricted
++    // board just to add them.
++    if (newRole !== 'ADMIN' && newUserAccess.size > 0) {
++      const email = newEmail.trim().toLowerCase();
++      for (const boardId of newUserAccess) {
++        const existingRes = await fetch(`/api/admin/boards/${boardId}/access`);
++        const existingData = await existingRes.json();
++        const existingEmails: string[] = existingRes.ok ? existingData.emails ?? [] : [];
++        await fetch(`/api/admin/boards/${boardId}/access`, {
++          method: 'PUT',
++          headers: { 'Content-Type': 'application/json' },
++          body: JSON.stringify({ emails: Array.from(new Set([...existingEmails, email])) }),
++        });
++      }
++    }
+     setNewEmail('');
+     setNewRole('USER');
++    setNewUserAccess(new Set());
++    setAdding(false);
+     load();
+   }
+ 
+-  async function updateUser(id: string, patch: Partial<Pick<AuthorizedUser, 'role' | 'status'>>) {
++  async function updateUser(id: string, patch: Partial<Pick<AuthorizedUser, 'role' | 'status' | 'restrict_devices'>>) {
+     setBusyId(id);
+     setError(null);
+     const res = await fetch(`/api/admin/users/${id}`, {
+@@ -131,12 +169,10 @@ export default function AdminUsersPage() {
+ 
+       <form
+         onSubmit={addUser}
+-        className="mt-6 flex flex-wrap items-end gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 backdrop-blur-xl shadow-glass"
++        className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 backdrop-blur-xl shadow-glass sm:grid-cols-2"
+       >
+-        <div className="min-w-[220px] flex-1">
+-          <label className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+-            Email
+-          </label>
++        <div>
++          <label className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">Email</label>
+           <input
+             type="email"
+             required
+@@ -147,35 +183,41 @@ export default function AdminUsersPage() {
+           />
+         </div>
+         <div>
+-          <label className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+-            Role
+-          </label>
++          <label className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">Role</label>
+           <select
+             value={newRole}
+             onChange={(e) => setNewRole(e.target.value as 'USER' | 'ADMIN')}
+-            className="mt-1 rounded-md border border-vault-border bg-vault-800 px-3 py-2 text-sm text-ink outline-none focus:border-signal"
++            className="mt-1 w-full rounded-md border border-vault-border bg-vault-800 px-3 py-2 text-sm text-ink outline-none focus:border-signal"
+           >
+             <option value="USER">USER</option>
+             <option value="ADMIN">ADMIN</option>
+           </select>
+         </div>
+-        <button
+-          type="submit"
+-          className="rounded-md bg-signal px-4 py-2 text-sm font-medium text-white transition hover:bg-signal-glow"
+-        >
+-          Add user
+-        </button>
++        {newRole !== 'ADMIN' && restrictedOrdered.length > 0 && (
++          <div className="sm:col-span-2">
++            <label className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
++              Give access to restricted boards (optional — you can also do this later from Edit or Access)
++            </label>
++            <div className="mt-1">
++              <BoardMultiSelect boards={boards} restrictedOrdered={restrictedOrdered} selected={newUserAccess} onChange={setNewUserAccess} />
++            </div>
++          </div>
++        )}
++        <div className="sm:col-span-2">
++          <button
++            type="submit"
++            disabled={adding}
++            className="rounded-md bg-signal px-4 py-2 text-sm font-medium text-white transition hover:bg-signal-glow disabled:opacity-60"
++          >
++            {adding ? 'Adding…' : 'Add user'}
++          </button>
++        </div>
+       </form>
+ 
+       {error && <p className="mt-3 text-xs text-danger">{error}</p>}
+ 
+       {users.length > 5 && (
+-        <SearchInput
+-          value={search}
+-          onChange={setSearch}
+-          placeholder="Search by email…"
+-          className="mt-4 max-w-sm"
+-        />
++        <SearchInput value={search} onChange={setSearch} placeholder="Search by email…" className="mt-4 max-w-sm" />
+       )}
+ 
+       <div className="mt-6 overflow-hidden rounded-xl border border-vault-border">
+@@ -212,16 +254,10 @@ export default function AdminUsersPage() {
+                 <tr key={u.id} className="border-t border-vault-border bg-vault-900/50">
+                   <td className="px-4 py-3 text-ink">{u.email}</td>
+                   <td className="px-4 py-3">
+-                    <span className="font-mono text-[10px] uppercase tracking-widest text-ink-dim">
+-                      {u.role}
+-                    </span>
++                    <span className="font-mono text-[10px] uppercase tracking-widest text-ink-dim">{u.role}</span>
+                   </td>
+                   <td className="px-4 py-3">
+-                    <span
+-                      className={`font-mono text-[10px] uppercase tracking-widest ${
+-                        u.status === 'ACTIVE' ? 'text-ok' : 'text-danger'
+-                      }`}
+-                    >
++                    <span className={`font-mono text-[10px] uppercase tracking-widest ${u.status === 'ACTIVE' ? 'text-ok' : 'text-danger'}`}>
+                       {u.status}
+                     </span>
+                     {u.restrict_devices && (
+@@ -232,31 +268,11 @@ export default function AdminUsersPage() {
+                   </td>
+                   <td className="px-4 py-3">
+                     <div className="flex justify-end gap-2">
+-                      <Link
+-                        href={`/admin/users/${u.id}`}
+-                        className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+-                      >
+-                        Devices
+-                      </Link>
+                       <button
+-                        disabled={busyId === u.id}
+-                        onClick={() =>
+-                          updateUser(u.id, { role: u.role === 'ADMIN' ? 'USER' : 'ADMIN' })
+-                        }
+-                        className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
+-                      >
+-                        {u.role === 'ADMIN' ? 'Make USER' : 'Make ADMIN'}
+-                      </button>
+-                      <button
+-                        disabled={busyId === u.id}
+-                        onClick={() =>
+-                          updateUser(u.id, {
+-                            status: u.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE',
+-                          })
+-                        }
+-                        className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
++                        onClick={() => setEditingId(u.id)}
++                        className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+                       >
+-                        {u.status === 'ACTIVE' ? 'Disable' : 'Enable'}
++                        Edit
+                       </button>
+                       <button
+                         disabled={busyId === u.id}
+@@ -273,6 +289,155 @@ export default function AdminUsersPage() {
+           </tbody>
+         </table>
+       </div>
++
++      {editingUser && (
++        <Modal title={editingUser.email} subtitle="Edit user" onClose={() => setEditingId(null)}>
++          <UserEditPanel
++            user={editingUser}
++            boards={boards}
++            restrictedOrdered={restrictedOrdered}
++            onUpdate={updateUser}
++            onError={setError}
++            busy={busyId === editingUser.id}
++          />
++        </Modal>
++      )}
++    </div>
++  );
++}
++
++function UserEditPanel({
++  user,
++  boards,
++  restrictedOrdered,
++  onUpdate,
++  onError,
++  busy,
++}: {
++  user: AuthorizedUser;
++  boards: Board[];
++  restrictedOrdered: ReturnType<typeof orderBoardsHierarchically<Board>>;
++  onUpdate: (id: string, patch: Partial<Pick<AuthorizedUser, 'role' | 'status' | 'restrict_devices'>>) => void;
++  onError: (msg: string) => void;
++  busy: boolean;
++}) {
++  const [initialGranted, setInitialGranted] = useState<Set<string>>(new Set());
++  const [checked, setChecked] = useState<Set<string>>(new Set());
++  const [loadingAccess, setLoadingAccess] = useState(true);
++  const [saving, setSaving] = useState(false);
++  const [saveResult, setSaveResult] = useState<string | null>(null);
++
++  useEffect(() => {
++    let cancelled = false;
++    (async () => {
++      setLoadingAccess(true);
++      const res = await fetch(`/api/admin/access-summary?email=${encodeURIComponent(user.email)}`);
++      const data = await res.json();
++      if (cancelled) return;
++      if (res.ok) {
++        const ids = new Set((data.grantedBoardIds ?? []) as string[]);
++        setInitialGranted(ids);
++        setChecked(ids);
++      }
++      setLoadingAccess(false);
++    })();
++    return () => {
++      cancelled = true;
++    };
++  }, [user.email]);
++
++  const changedIds = useMemo(() => {
++    const changed: string[] = [];
++    for (const b of restrictedOrdered) {
++      if (checked.has(b.id) !== initialGranted.has(b.id)) changed.push(b.id);
++    }
++    return changed;
++  }, [checked, initialGranted, restrictedOrdered]);
++
++  async function saveAccess() {
++    if (changedIds.length === 0) return;
++    setSaving(true);
++    setSaveResult(null);
++    try {
++      for (const boardId of changedIds) {
++        const existingRes = await fetch(`/api/admin/boards/${boardId}/access`);
++        const existingData = await existingRes.json();
++        const existingEmails: string[] = existingRes.ok ? existingData.emails ?? [] : [];
++        const willGrant = checked.has(boardId);
++        const nextEmails = willGrant
++          ? Array.from(new Set([...existingEmails, user.email]))
++          : existingEmails.filter((e) => e.toLowerCase() !== user.email.toLowerCase());
++        await fetch(`/api/admin/boards/${boardId}/access`, {
++          method: 'PUT',
++          headers: { 'Content-Type': 'application/json' },
++          body: JSON.stringify({ emails: nextEmails }),
++        });
++      }
++      setInitialGranted(new Set(checked));
++      setSaveResult(`Updated ${changedIds.length} board${changedIds.length === 1 ? '' : 's'}.`);
++    } catch {
++      onError('Something went wrong partway through saving this user\u2019s access — please check and try again.');
++    }
++    setSaving(false);
++  }
++
++  return (
++    <div className="space-y-5">
++      <div className="flex flex-wrap gap-3">
++        <button
++          disabled={busy}
++          onClick={() => onUpdate(user.id, { role: user.role === 'ADMIN' ? 'USER' : 'ADMIN' })}
++          className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
++        >
++          {user.role === 'ADMIN' ? 'Make USER' : 'Make ADMIN'}
++        </button>
++        <button
++          disabled={busy}
++          onClick={() => onUpdate(user.id, { status: user.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE' })}
++          className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
++        >
++          {user.status === 'ACTIVE' ? 'Disable' : 'Enable'}
++        </button>
++        <button
++          disabled={busy}
++          onClick={() => onUpdate(user.id, { restrict_devices: !user.restrict_devices })}
++          className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
++        >
++          {user.restrict_devices ? 'Remove device restriction' : 'Require device approval'}
++        </button>
++        <Link
++          href={`/admin/users/${user.id}`}
++          className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
++        >
++          Manage devices
++        </Link>
++      </div>
++
++      {user.role === 'ADMIN' ? (
++        <p className="text-xs text-ink-faint">Admins always have access to every board — there&rsquo;s nothing to grant here.</p>
++      ) : (
++        <div>
++          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">Restricted-board access</p>
++          {loadingAccess ? (
++            <p className="mt-2 text-xs text-ink-faint">Loading…</p>
++          ) : (
++            <div className="mt-2">
++              <BoardMultiSelect boards={boards} restrictedOrdered={restrictedOrdered} selected={checked} onChange={setChecked} />
++              <div className="mt-2 flex flex-wrap items-center gap-3">
++                <button
++                  type="button"
++                  onClick={saveAccess}
++                  disabled={saving || changedIds.length === 0}
++                  className="rounded-md bg-signal px-3 py-1.5 text-xs font-medium text-white transition hover:bg-signal-glow disabled:opacity-50"
++                >
++                  {saving ? 'Saving…' : changedIds.length === 0 ? 'No changes' : `Save ${changedIds.length} change${changedIds.length === 1 ? '' : 's'}`}
++                </button>
++                {saveResult && <span className="text-xs text-ok">{saveResult}</span>}
++              </div>
++            </div>
++          )}
++        </div>
++      )}
+     </div>
+   );
+ }
+diff --git a/app/admin/videos/page.tsx b/app/admin/videos/page.tsx
+index 42d17f8..c78b0c9 100644
+--- a/app/admin/videos/page.tsx
++++ b/app/admin/videos/page.tsx
+@@ -1,9 +1,12 @@
+ 'use client';
+ 
+-import { useEffect, useState } from 'react';
++import Link from 'next/link';
++import { useEffect, useMemo, useState } from 'react';
+ import { ThumbnailUpload } from '@/components/ThumbnailUpload';
++import { Modal } from '@/components/Modal';
++import { orderBoardsHierarchically } from '@/lib/boardTree';
+ 
+-type Board = { id: string; title: string; parent_id: string | null };
++type Board = { id: string; title: string; parent_id: string | null; visibility?: 'universal' | 'restricted' };
+ type Resource = { id: string; title: string; url: string; sort_order: number };
+ type Video = {
+   id: string;
+@@ -85,8 +88,9 @@ export default function AdminVideosPage() {
+   const [sortOrder, setSortOrder] = useState(0);
+   const [downloadUrl, setDownloadUrl] = useState('');
+ 
+-  // Which video row is expanded for editing
++  // Which video's edit modal is open
+   const [editingId, setEditingId] = useState<string | null>(null);
++  const editingVideo = useMemo(() => videos.find((v) => v.id === editingId) ?? null, [videos, editingId]);
+ 
+   async function load() {
+     setLoading(true);
+@@ -345,10 +349,10 @@ export default function AdminVideosPage() {
+                 </div>
+                 <div className="flex gap-2">
+                   <button
+-                    onClick={() => setEditingId(editingId === v.id ? null : v.id)}
++                    onClick={() => setEditingId(v.id)}
+                     className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+                   >
+-                    {editingId === v.id ? 'Close' : 'Edit'}
++                    Edit
+                   </button>
+                   <button
+                     disabled={busyId === v.id}
+@@ -359,28 +363,35 @@ export default function AdminVideosPage() {
+                   </button>
+                 </div>
+               </div>
+-
+-              {editingId === v.id && (
+-                <VideoEditPanel video={v} onSaved={load} onError={setError} />
+-              )}
+             </div>
+           ))
+         )}
+       </div>
++
++      {editingVideo && (
++        <Modal title={`Edit "${editingVideo.title}"`} subtitle="Classes" onClose={() => setEditingId(null)} wide>
++          <VideoEditPanel video={editingVideo} boards={boards} onSaved={load} onError={setError} />
++        </Modal>
++      )}
+     </div>
+   );
+ }
+ 
+ function VideoEditPanel({
+   video,
++  boards,
+   onSaved,
+   onError,
+ }: {
+   video: Video;
++  boards: Board[];
+   onSaved: () => void;
+   onError: (msg: string) => void;
+ }) {
+   const [title, setTitle] = useState(video.title);
++  const [boardId, setBoardId] = useState(video.board_id);
++  const orderedBoards = useMemo(() => orderBoardsHierarchically(boards), [boards]);
++  const currentBoard = useMemo(() => boards.find((b) => b.id === boardId), [boards, boardId]);
+   const [description, setDescription] = useState(video.description ?? '');
+   const [thumbnailUrl, setThumbnailUrl] = useState(video.thumbnail_url ?? '');
+   const [editProvider, setEditProvider] = useState<'bunny' | 'youtube' | 'mp4'>(
+@@ -429,6 +440,7 @@ function VideoEditPanel({
+     setSaving(true);
+     const patch: Record<string, unknown> = {
+       title,
++      board_id: boardId,
+       description: description || null,
+       thumbnail_url: thumbnailUrl || null,
+       sort_order: sortOrder,
+@@ -483,11 +495,38 @@ function VideoEditPanel({
+   }
+ 
+   return (
+-    <div className="border-t border-vault-border bg-vault-800/50 p-5">
++    <div>
+       <form onSubmit={saveDetails} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+         <Field label="Title">
+           <input value={title} onChange={(e) => setTitle(e.target.value)} className="input" required />
+         </Field>
++        <Field label="Board (this class belongs to)">
++          <select value={boardId} onChange={(e) => setBoardId(e.target.value)} className="input" required>
++            {orderedBoards.map((b) => (
++              <option key={b.id} value={b.id}>
++                {'—'.repeat(b.depth)}
++                {b.depth > 0 ? ' ' : ''}
++                {b.title}
++              </option>
++            ))}
++          </select>
++          {/* Classes don't have their own access list — who can watch this
++              one follows whichever board it's attached to. Restricted per
++              board, not per class, so this is a status readout + a link
++              rather than another checklist to keep in sync. */}
++          <p className="mt-1 text-xs text-ink-faint">
++            {currentBoard?.visibility === 'restricted' ? (
++              <>
++                Restricted — access is managed on the board, not the class.{' '}
++                <Link href={`/admin/access`} className="underline decoration-dotted hover:text-signal">
++                  Manage who can see it
++                </Link>
++              </>
++            ) : (
++              'Universal — visible to every authorized user, via this board.'
++            )}
++          </p>
++        </Field>
+         <div className="sm:col-span-2">
+           <Field label="Video source">
+             <div className="flex gap-4">
+diff --git a/app/api/admin/access-summary/route.ts b/app/api/admin/access-summary/route.ts
+new file mode 100644
+index 0000000..2a8557b
+--- /dev/null
++++ b/app/api/admin/access-summary/route.ts
+@@ -0,0 +1,42 @@
++import { NextResponse, type NextRequest } from 'next/server';
++import { requireAdmin } from '@/lib/auth';
++import { createSupabaseServerClient } from '@/lib/supabase/server';
++
++export const dynamic = 'force-dynamic';
++
++/**
++ * Board-id -> granted-user-count for every restricted board, in one
++ * query. Lets the boards list and the Access page show "3 users" inline
++ * instead of making an admin open each board's editor just to see
++ * whether anyone has access yet.
++ *
++ * With ?email=someone@x.com, also returns grantedBoardIds — every board
++ * that specific person is explicitly granted on — in one extra query.
++ * This is what makes the "by user" view on the Access page possible
++ * without fetching every restricted board's grant list one at a time.
++ */
++export async function GET(request: NextRequest) {
++  const auth = await requireAdmin();
++  if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
++
++  const supabase = createSupabaseServerClient();
++  const { data, error } = await supabase.from('board_user_access').select('board_id');
++  if (error) return NextResponse.json({ error: 'Something went wrong.' }, { status: 500 });
++
++  const counts: Record<string, number> = {};
++  for (const row of data ?? []) {
++    const id = row.board_id as string;
++    counts[id] = (counts[id] ?? 0) + 1;
++  }
++
++  const email = request.nextUrl.searchParams.get('email')?.trim().toLowerCase();
++  if (!email) return NextResponse.json({ counts });
++
++  const { data: granted, error: grantedError } = await supabase
++    .from('board_user_access')
++    .select('board_id')
++    .eq('user_email', email);
++  if (grantedError) return NextResponse.json({ error: 'Something went wrong.' }, { status: 500 });
++
++  return NextResponse.json({ counts, grantedBoardIds: (granted ?? []).map((r) => r.board_id as string) });
++}
+diff --git a/components/AdminSidebar.tsx b/components/AdminSidebar.tsx
+index 7840679..6236a75 100644
+--- a/components/AdminSidebar.tsx
++++ b/components/AdminSidebar.tsx
+@@ -40,6 +40,16 @@ const ITEMS = [
+       </g>
+     ),
+   },
++  {
++    href: '/admin/access',
++    label: 'Access',
++    icon: (
++      <g stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
++        <rect x="5" y="10.5" width="14" height="9" rx="1.8" />
++        <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
++      </g>
++    ),
++  },
+   {
+     href: '/admin/videos',
+     label: 'Classes',
+diff --git a/components/BoardMultiSelect.tsx b/components/BoardMultiSelect.tsx
+new file mode 100644
+index 0000000..40eff84
+--- /dev/null
++++ b/components/BoardMultiSelect.tsx
+@@ -0,0 +1,82 @@
++'use client';
++
++import { useMemo, useState } from 'react';
++import { SearchInput } from '@/components/SearchInput';
++import { ancestorTitles, type BoardNode, type TreeBoard } from '@/lib/boardTree';
++
++/**
++ * Searchable checklist of restricted boards (breadcrumb + title), used
++ * anywhere an admin needs to pick "which boards" a person should see —
++ * a user's access edit, or the access section on the add-user form. The
++ * counterpart to UserMultiSelect, same controlled-Set pattern.
++ */
++export function BoardMultiSelect<T extends TreeBoard>({
++  boards,
++  restrictedOrdered,
++  selected,
++  onChange,
++}: {
++  /** Full flat board list — needed to resolve breadcrumb ancestry. */
++  boards: T[];
++  /** Restricted boards only, already depth-first ordered. */
++  restrictedOrdered: BoardNode<T>[];
++  selected: Set<string>;
++  onChange: (next: Set<string>) => void;
++}) {
++  const [search, setSearch] = useState('');
++
++  const visible = useMemo(() => {
++    const needle = search.trim().toLowerCase();
++    if (!needle) return restrictedOrdered;
++    return restrictedOrdered.filter(
++      (b) => b.title.toLowerCase().includes(needle) || ancestorTitles(boards, b.id).some((t) => t.toLowerCase().includes(needle))
++    );
++  }, [restrictedOrdered, search, boards]);
++
++  function toggle(id: string) {
++    const next = new Set(selected);
++    if (next.has(id)) next.delete(id);
++    else next.add(id);
++    onChange(next);
++  }
++
++  if (restrictedOrdered.length === 0) {
++    return <p className="text-xs text-ink-faint">No restricted boards exist yet — everything is universal.</p>;
++  }
++
++  return (
++    <div>
++      {restrictedOrdered.length > 5 && (
++        <SearchInput value={search} onChange={setSearch} placeholder="Filter boards…" className="mb-2" />
++      )}
++      <div className="max-h-48 overflow-y-auto rounded-md border border-vault-border bg-vault-900 p-2">
++        {visible.length === 0 ? (
++          <p className="px-1.5 py-1 text-xs text-ink-faint">No boards match.</p>
++        ) : (
++          visible.map((b) => {
++            const breadcrumb = ancestorTitles(boards, b.id).join(' › ');
++            return (
++              <label
++                key={b.id}
++                className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-ink hover:bg-vault-800/60"
++              >
++                <input type="checkbox" checked={selected.has(b.id)} onChange={() => toggle(b.id)} className="accent-signal" />
++                <span className="min-w-0">
++                  {breadcrumb && (
++                    <span className="block truncate font-mono text-[10px] uppercase tracking-widest text-ink-faint/70">
++                      {breadcrumb}
++                    </span>
++                  )}
++                  <span className="block truncate">{b.title}</span>
++                </span>
++              </label>
++            );
++          })
++        )}
++      </div>
++      <p className="mt-1.5 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
++        {selected.size} of {restrictedOrdered.length} selected
++      </p>
++    </div>
++  );
++}
+diff --git a/components/Modal.tsx b/components/Modal.tsx
+new file mode 100644
+index 0000000..cef5386
+--- /dev/null
++++ b/components/Modal.tsx
+@@ -0,0 +1,68 @@
++'use client';
++
++import { useEffect } from 'react';
++
++/**
++ * The one modal every admin "Edit" button opens into. Centralizing it
++ * here means every entity — boards, users, classes, e-books — gets the
++ * same escape-to-close, backdrop-click-to-close, and scroll-locked
++ * behavior for free, instead of each page reinventing its own inline
++ * expand-in-place panel.
++ */
++export function Modal({
++  title,
++  subtitle,
++  onClose,
++  children,
++  wide = false,
++}: {
++  title: string;
++  subtitle?: string;
++  onClose: () => void;
++  children: React.ReactNode;
++  /** Wider modal for panels with a lot of side-by-side fields (board/video edit). */
++  wide?: boolean;
++}) {
++  useEffect(() => {
++    function onKeyDown(e: KeyboardEvent) {
++      if (e.key === 'Escape') onClose();
++    }
++    document.addEventListener('keydown', onKeyDown);
++    const previousOverflow = document.body.style.overflow;
++    document.body.style.overflow = 'hidden';
++    return () => {
++      document.removeEventListener('keydown', onKeyDown);
++      document.body.style.overflow = previousOverflow;
++    };
++  }, [onClose]);
++
++  return (
++    <div
++      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 px-4 py-8 backdrop-blur-sm sm:items-center"
++      onClick={(e) => {
++        if (e.target === e.currentTarget) onClose();
++      }}
++    >
++      <div
++        className={`w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} rounded-2xl border border-vault-border bg-vault-900 shadow-glass`}
++      >
++        <div className="flex items-start justify-between gap-3 border-b border-vault-border px-5 py-4">
++          <div className="min-w-0">
++            <h2 className="truncate font-display text-lg font-semibold text-ink">{title}</h2>
++            {subtitle && <p className="mt-0.5 truncate text-xs text-ink-faint">{subtitle}</p>}
++          </div>
++          <button
++            onClick={onClose}
++            aria-label="Close"
++            className="shrink-0 rounded-md p-1 text-ink-faint transition hover:bg-vault-800 hover:text-ink"
++          >
++            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
++              <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
++            </svg>
++          </button>
++        </div>
++        <div className="max-h-[75vh] overflow-y-auto p-5">{children}</div>
++      </div>
++    </div>
++  );
++}
+diff --git a/components/UserMultiSelect.tsx b/components/UserMultiSelect.tsx
+new file mode 100644
+index 0000000..fa2e270
+--- /dev/null
++++ b/components/UserMultiSelect.tsx
+@@ -0,0 +1,96 @@
++'use client';
++
++import { useMemo, useState } from 'react';
++import { SearchInput } from '@/components/SearchInput';
++
++export type SelectableUser = { email: string };
++
++/**
++ * Searchable checklist of user emails with select-all/clear-shown, used
++ * anywhere an admin needs to pick "which people" — a board's access
++ * list, or the access list being set up while creating a brand-new
++ * board. Deliberately dumb (controlled `selected` Set in, `onChange`
++ * out) so both call sites can decide what "save" means for themselves.
++ */
++export function UserMultiSelect({
++  users,
++  selected,
++  onChange,
++  emptyLabel = 'No users to choose from yet.',
++}: {
++  users: SelectableUser[];
++  selected: Set<string>;
++  onChange: (next: Set<string>) => void;
++  emptyLabel?: string;
++}) {
++  const [search, setSearch] = useState('');
++
++  const visible = useMemo(() => {
++    const needle = search.trim().toLowerCase();
++    if (!needle) return users;
++    return users.filter((u) => u.email.toLowerCase().includes(needle));
++  }, [users, search]);
++
++  function toggle(email: string) {
++    const next = new Set(selected);
++    if (next.has(email)) next.delete(email);
++    else next.add(email);
++    onChange(next);
++  }
++
++  function selectAllVisible() {
++    const next = new Set(selected);
++    for (const u of visible) next.add(u.email);
++    onChange(next);
++  }
++
++  function clearVisible() {
++    const next = new Set(selected);
++    for (const u of visible) next.delete(u.email);
++    onChange(next);
++  }
++
++  if (users.length === 0) return <p className="text-xs text-ink-faint">{emptyLabel}</p>;
++
++  return (
++    <div>
++      <div className="mb-2 flex flex-wrap items-center gap-2">
++        {users.length > 5 && (
++          <SearchInput value={search} onChange={setSearch} placeholder="Search users…" className="w-full sm:w-56" />
++        )}
++        <button
++          type="button"
++          onClick={selectAllVisible}
++          className="rounded-md border border-vault-border px-2 py-1 text-[11px] text-ink-dim transition hover:border-signal hover:text-ink"
++        >
++          Select all{search ? ' shown' : ''}
++        </button>
++        <button
++          type="button"
++          onClick={clearVisible}
++          className="rounded-md border border-vault-border px-2 py-1 text-[11px] text-ink-dim transition hover:border-signal hover:text-ink"
++        >
++          Clear{search ? ' shown' : ' all'}
++        </button>
++      </div>
++      <div className="max-h-48 overflow-y-auto rounded-md border border-vault-border bg-vault-900 p-2">
++        {visible.length === 0 ? (
++          <p className="px-1.5 py-1 text-xs text-ink-faint">No users match.</p>
++        ) : (
++          visible.map((u) => (
++            <label
++              key={u.email}
++              className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm text-ink hover:bg-vault-800/60"
++            >
++              <input type="checkbox" checked={selected.has(u.email)} onChange={() => toggle(u.email)} className="accent-signal" />
++              <span className="truncate">{u.email}</span>
++            </label>
++          ))
++        )}
++      </div>
++      <p className="mt-1.5 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
++        {selected.size} of {users.length} selected
++      </p>
++    </div>
++  );
++}
+diff --git a/lib/boardTree.ts b/lib/boardTree.ts
+index c04a20f..30a0eaa 100644
+--- a/lib/boardTree.ts
++++ b/lib/boardTree.ts
+@@ -62,6 +62,38 @@ export function orderBoardsHierarchically<T extends TreeBoard>(boards: T[]): Boa
+   return flattenTree(buildBoardTree(boards));
+ }
+ 
++/**
++ * Titles of every ancestor of `boardId`, root-first, NOT including the
++ * board itself — e.g. for "Chapter 3" nested under "Physics" under
++ * "Class 9" this returns ["Class 9", "Physics"]. Used to show a real
++ * breadcrumb ("Class 9 › Physics › Chapter 3") instead of a bare
++ * "depth 2" label, so which board sits under which is legible without
++ * having to trace indentation by eye.
++ */
++export function ancestorTitles<T extends TreeBoard>(boards: T[], boardId: string): string[] {
++  const byId = new Map(boards.map((b) => [b.id, b]));
++  const titles: string[] = [];
++  let current = byId.get(boardId);
++  const seen = new Set<string>();
++  while (current?.parent_id && byId.has(current.parent_id) && !seen.has(current.parent_id)) {
++    seen.add(current.parent_id);
++    const parent = byId.get(current.parent_id)!;
++    titles.unshift(parent.title);
++    current = parent;
++  }
++  return titles;
++}
++
++/** Every id that has at least one child — used to decide which rows get
++ * an expand/collapse toggle. */
++export function idsWithChildren<T extends TreeBoard>(boards: T[]): Set<string> {
++  const ids = new Set<string>();
++  for (const b of boards) {
++    if (b.parent_id) ids.add(b.parent_id);
++  }
++  return ids;
++}
++
+ /**
+  * Every id in `excludeId`'s own subtree (including itself) — used to keep
+  * a board from being reparented under one of its own descendants, which

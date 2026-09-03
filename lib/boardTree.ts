@@ -63,6 +63,38 @@ export function orderBoardsHierarchically<T extends TreeBoard>(boards: T[]): Boa
 }
 
 /**
+ * Titles of every ancestor of `boardId`, root-first, NOT including the
+ * board itself — e.g. for "Chapter 3" nested under "Physics" under
+ * "Class 9" this returns ["Class 9", "Physics"]. Used to show a real
+ * breadcrumb ("Class 9 › Physics › Chapter 3") instead of a bare
+ * "depth 2" label, so which board sits under which is legible without
+ * having to trace indentation by eye.
+ */
+export function ancestorTitles<T extends TreeBoard>(boards: T[], boardId: string): string[] {
+  const byId = new Map(boards.map((b) => [b.id, b]));
+  const titles: string[] = [];
+  let current = byId.get(boardId);
+  const seen = new Set<string>();
+  while (current?.parent_id && byId.has(current.parent_id) && !seen.has(current.parent_id)) {
+    seen.add(current.parent_id);
+    const parent = byId.get(current.parent_id)!;
+    titles.unshift(parent.title);
+    current = parent;
+  }
+  return titles;
+}
+
+/** Every id that has at least one child — used to decide which rows get
+ * an expand/collapse toggle. */
+export function idsWithChildren<T extends TreeBoard>(boards: T[]): Set<string> {
+  const ids = new Set<string>();
+  for (const b of boards) {
+    if (b.parent_id) ids.add(b.parent_id);
+  }
+  return ids;
+}
+
+/**
  * Every id in `excludeId`'s own subtree (including itself) — used to keep
  * a board from being reparented under one of its own descendants, which
  * would silently break the tree (a cycle Postgres won't catch for you).

@@ -144,7 +144,7 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-8">
+    <main className="mx-auto max-w-screen-2xl px-6 py-8">
       <nav className="flex flex-wrap items-center gap-1.5 text-sm text-ink-faint">
         <Link href="/learn" className="text-signal hover:underline">
           Learn

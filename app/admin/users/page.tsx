@@ -3,6 +3,9 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { SearchInput } from '@/components/SearchInput';
+import { Modal } from '@/components/Modal';
+import { BoardMultiSelect } from '@/components/BoardMultiSelect';
+import { orderBoardsHierarchically } from '@/lib/boardTree';
 
 type AuthorizedUser = {
   id: string;
@@ -13,13 +16,19 @@ type AuthorizedUser = {
   created_at: string;
 };
 
+type Board = { id: string; title: string; parent_id: string | null; visibility: 'universal' | 'restricted' };
+
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<AuthorizedUser[]>([]);
+  const [boards, setBoards] = useState<Board[]>([]);
   const [loading, setLoading] = useState(true);
   const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState<'USER' | 'ADMIN'>('USER');
+  const [newUserAccess, setNewUserAccess] = useState<Set<string>>(new Set());
+  const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [enforcing, setEnforcing] = useState(false);
   const [enforceResult, setEnforceResult] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -30,11 +39,20 @@ export default function AdminUsersPage() {
     return users.filter((u) => u.email.toLowerCase().includes(needle));
   }, [users, search]);
 
+  const restrictedOrdered = useMemo(
+    () => orderBoardsHierarchically(boards).filter((b) => b.visibility === 'restricted'),
+    [boards]
+  );
+
+  const editingUser = useMemo(() => users.find((u) => u.id === editingId) ?? null, [users, editingId]);
+
   async function load() {
     setLoading(true);
-    const res = await fetch('/api/admin/users');
-    const data = await res.json();
-    if (res.ok) setUsers(data.users);
+    const [usersRes, boardsRes] = await Promise.all([fetch('/api/admin/users'), fetch('/api/admin/boards')]);
+    const usersData = await usersRes.json();
+    const boardsData = await boardsRes.json();
+    if (usersRes.ok) setUsers(usersData.users);
+    if (boardsRes.ok) setBoards(boardsData.boards);
     setLoading(false);
   }
 
@@ -45,6 +63,7 @@ export default function AdminUsersPage() {
   async function addUser(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setAdding(true);
     const res = await fetch('/api/admin/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -53,14 +72,33 @@ export default function AdminUsersPage() {
     const data = await res.json();
     if (!res.ok) {
       setError(data.error ?? 'Could not add user.');
+      setAdding(false);
       return;
+    }
+    // Board access can be defined right here at creation time — no need
+    // to save the user first, then separately open every restricted
+    // board just to add them.
+    if (newRole !== 'ADMIN' && newUserAccess.size > 0) {
+      const email = newEmail.trim().toLowerCase();
+      for (const boardId of newUserAccess) {
+        const existingRes = await fetch(`/api/admin/boards/${boardId}/access`);
+        const existingData = await existingRes.json();
+        const existingEmails: string[] = existingRes.ok ? existingData.emails ?? [] : [];
+        await fetch(`/api/admin/boards/${boardId}/access`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emails: Array.from(new Set([...existingEmails, email])) }),
+        });
+      }
     }
     setNewEmail('');
     setNewRole('USER');
+    setNewUserAccess(new Set());
+    setAdding(false);
     load();
   }
 
-  async function updateUser(id: string, patch: Partial<Pick<AuthorizedUser, 'role' | 'status'>>) {
+  async function updateUser(id: string, patch: Partial<Pick<AuthorizedUser, 'role' | 'status' | 'restrict_devices'>>) {
     setBusyId(id);
     setError(null);
     const res = await fetch(`/api/admin/users/${id}`, {
@@ -131,12 +169,10 @@ export default function AdminUsersPage() {
 
       <form
         onSubmit={addUser}
-        className="mt-6 flex flex-wrap items-end gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 backdrop-blur-xl shadow-glass"
+        className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 backdrop-blur-xl shadow-glass sm:grid-cols-2"
       >
-        <div className="min-w-[220px] flex-1">
-          <label className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
-            Email
-          </label>
+        <div>
+          <label className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">Email</label>
           <input
             type="email"
             required
@@ -147,35 +183,41 @@ export default function AdminUsersPage() {
           />
         </div>
         <div>
-          <label className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
-            Role
-          </label>
+          <label className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">Role</label>
           <select
             value={newRole}
             onChange={(e) => setNewRole(e.target.value as 'USER' | 'ADMIN')}
-            className="mt-1 rounded-md border border-vault-border bg-vault-800 px-3 py-2 text-sm text-ink outline-none focus:border-signal"
+            className="mt-1 w-full rounded-md border border-vault-border bg-vault-800 px-3 py-2 text-sm text-ink outline-none focus:border-signal"
           >
             <option value="USER">USER</option>
             <option value="ADMIN">ADMIN</option>
           </select>
         </div>
-        <button
-          type="submit"
-          className="rounded-md bg-signal px-4 py-2 text-sm font-medium text-white transition hover:bg-signal-glow"
-        >
-          Add user
-        </button>
+        {newRole !== 'ADMIN' && restrictedOrdered.length > 0 && (
+          <div className="sm:col-span-2">
+            <label className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+              Give access to restricted boards (optional — you can also do this later from Edit or Access)
+            </label>
+            <div className="mt-1">
+              <BoardMultiSelect boards={boards} restrictedOrdered={restrictedOrdered} selected={newUserAccess} onChange={setNewUserAccess} />
+            </div>
+          </div>
+        )}
+        <div className="sm:col-span-2">
+          <button
+            type="submit"
+            disabled={adding}
+            className="rounded-md bg-signal px-4 py-2 text-sm font-medium text-white transition hover:bg-signal-glow disabled:opacity-60"
+          >
+            {adding ? 'Adding…' : 'Add user'}
+          </button>
+        </div>
       </form>
 
       {error && <p className="mt-3 text-xs text-danger">{error}</p>}
 
       {users.length > 5 && (
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Search by email…"
-          className="mt-4 max-w-sm"
-        />
+        <SearchInput value={search} onChange={setSearch} placeholder="Search by email…" className="mt-4 max-w-sm" />
       )}
 
       <div className="mt-6 overflow-hidden rounded-xl border border-vault-border">
@@ -212,16 +254,10 @@ export default function AdminUsersPage() {
                 <tr key={u.id} className="border-t border-vault-border bg-vault-900/50">
                   <td className="px-4 py-3 text-ink">{u.email}</td>
                   <td className="px-4 py-3">
-                    <span className="font-mono text-[10px] uppercase tracking-widest text-ink-dim">
-                      {u.role}
-                    </span>
+                    <span className="font-mono text-[10px] uppercase tracking-widest text-ink-dim">{u.role}</span>
                   </td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`font-mono text-[10px] uppercase tracking-widest ${
-                        u.status === 'ACTIVE' ? 'text-ok' : 'text-danger'
-                      }`}
-                    >
+                    <span className={`font-mono text-[10px] uppercase tracking-widest ${u.status === 'ACTIVE' ? 'text-ok' : 'text-danger'}`}>
                       {u.status}
                     </span>
                     {u.restrict_devices && (
@@ -232,31 +268,11 @@ export default function AdminUsersPage() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
-                      <Link
-                        href={`/admin/users/${u.id}`}
+                      <button
+                        onClick={() => setEditingId(u.id)}
                         className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
                       >
-                        Devices
-                      </Link>
-                      <button
-                        disabled={busyId === u.id}
-                        onClick={() =>
-                          updateUser(u.id, { role: u.role === 'ADMIN' ? 'USER' : 'ADMIN' })
-                        }
-                        className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
-                      >
-                        {u.role === 'ADMIN' ? 'Make USER' : 'Make ADMIN'}
-                      </button>
-                      <button
-                        disabled={busyId === u.id}
-                        onClick={() =>
-                          updateUser(u.id, {
-                            status: u.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE',
-                          })
-                        }
-                        className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
-                      >
-                        {u.status === 'ACTIVE' ? 'Disable' : 'Enable'}
+                        Edit
                       </button>
                       <button
                         disabled={busyId === u.id}
@@ -273,6 +289,155 @@ export default function AdminUsersPage() {
           </tbody>
         </table>
       </div>
+
+      {editingUser && (
+        <Modal title={editingUser.email} subtitle="Edit user" onClose={() => setEditingId(null)}>
+          <UserEditPanel
+            user={editingUser}
+            boards={boards}
+            restrictedOrdered={restrictedOrdered}
+            onUpdate={updateUser}
+            onError={setError}
+            busy={busyId === editingUser.id}
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function UserEditPanel({
+  user,
+  boards,
+  restrictedOrdered,
+  onUpdate,
+  onError,
+  busy,
+}: {
+  user: AuthorizedUser;
+  boards: Board[];
+  restrictedOrdered: ReturnType<typeof orderBoardsHierarchically<Board>>;
+  onUpdate: (id: string, patch: Partial<Pick<AuthorizedUser, 'role' | 'status' | 'restrict_devices'>>) => void;
+  onError: (msg: string) => void;
+  busy: boolean;
+}) {
+  const [initialGranted, setInitialGranted] = useState<Set<string>>(new Set());
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [loadingAccess, setLoadingAccess] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveResult, setSaveResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingAccess(true);
+      const res = await fetch(`/api/admin/access-summary?email=${encodeURIComponent(user.email)}`);
+      const data = await res.json();
+      if (cancelled) return;
+      if (res.ok) {
+        const ids = new Set((data.grantedBoardIds ?? []) as string[]);
+        setInitialGranted(ids);
+        setChecked(ids);
+      }
+      setLoadingAccess(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user.email]);
+
+  const changedIds = useMemo(() => {
+    const changed: string[] = [];
+    for (const b of restrictedOrdered) {
+      if (checked.has(b.id) !== initialGranted.has(b.id)) changed.push(b.id);
+    }
+    return changed;
+  }, [checked, initialGranted, restrictedOrdered]);
+
+  async function saveAccess() {
+    if (changedIds.length === 0) return;
+    setSaving(true);
+    setSaveResult(null);
+    try {
+      for (const boardId of changedIds) {
+        const existingRes = await fetch(`/api/admin/boards/${boardId}/access`);
+        const existingData = await existingRes.json();
+        const existingEmails: string[] = existingRes.ok ? existingData.emails ?? [] : [];
+        const willGrant = checked.has(boardId);
+        const nextEmails = willGrant
+          ? Array.from(new Set([...existingEmails, user.email]))
+          : existingEmails.filter((e) => e.toLowerCase() !== user.email.toLowerCase());
+        await fetch(`/api/admin/boards/${boardId}/access`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emails: nextEmails }),
+        });
+      }
+      setInitialGranted(new Set(checked));
+      setSaveResult(`Updated ${changedIds.length} board${changedIds.length === 1 ? '' : 's'}.`);
+    } catch {
+      onError('Something went wrong partway through saving this user\u2019s access — please check and try again.');
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap gap-3">
+        <button
+          disabled={busy}
+          onClick={() => onUpdate(user.id, { role: user.role === 'ADMIN' ? 'USER' : 'ADMIN' })}
+          className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
+        >
+          {user.role === 'ADMIN' ? 'Make USER' : 'Make ADMIN'}
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => onUpdate(user.id, { status: user.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE' })}
+          className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
+        >
+          {user.status === 'ACTIVE' ? 'Disable' : 'Enable'}
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => onUpdate(user.id, { restrict_devices: !user.restrict_devices })}
+          className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
+        >
+          {user.restrict_devices ? 'Remove device restriction' : 'Require device approval'}
+        </button>
+        <Link
+          href={`/admin/users/${user.id}`}
+          className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+        >
+          Manage devices
+        </Link>
+      </div>
+
+      {user.role === 'ADMIN' ? (
+        <p className="text-xs text-ink-faint">Admins always have access to every board — there&rsquo;s nothing to grant here.</p>
+      ) : (
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">Restricted-board access</p>
+          {loadingAccess ? (
+            <p className="mt-2 text-xs text-ink-faint">Loading…</p>
+          ) : (
+            <div className="mt-2">
+              <BoardMultiSelect boards={boards} restrictedOrdered={restrictedOrdered} selected={checked} onChange={setChecked} />
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={saveAccess}
+                  disabled={saving || changedIds.length === 0}
+                  className="rounded-md bg-signal px-3 py-1.5 text-xs font-medium text-white transition hover:bg-signal-glow disabled:opacity-50"
+                >
+                  {saving ? 'Saving…' : changedIds.length === 0 ? 'No changes' : `Save ${changedIds.length} change${changedIds.length === 1 ? '' : 's'}`}
+                </button>
+                {saveResult && <span className="text-xs text-ok">{saveResult}</span>}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -31,7 +31,7 @@ export function VideosSearchGrid({ videos }: { videos: Video[] }) {
           {videos.length === 0 ? 'No classes yet.' : 'No classes match your search.'}
         </p>
       ) : (
-        <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((v) => {
             const i = videos.findIndex((x) => x.id === v.id);
             return (

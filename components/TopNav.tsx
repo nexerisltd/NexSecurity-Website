@@ -308,7 +308,7 @@ export function TopNav({
     .join('');
 
   return (
-    <header className="relative z-30 px-4 pt-3">
+    <header className="sticky top-0 z-30 px-4 pt-3">
       <div className="glass-panel-solid mx-auto max-w-screen-2xl rounded-2xl">
         <div className="flex items-center gap-3 px-4 py-3 sm:px-6 md:gap-6">
         <div className="flex shrink-0 items-center gap-2">

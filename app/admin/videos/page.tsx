@@ -1,9 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
 import { ThumbnailUpload } from '@/components/ThumbnailUpload';
+import { Modal } from '@/components/Modal';
+import { orderBoardsHierarchically } from '@/lib/boardTree';
 
-type Board = { id: string; title: string; parent_id: string | null };
+type Board = { id: string; title: string; parent_id: string | null; visibility?: 'universal' | 'restricted' };
 type Resource = { id: string; title: string; url: string; sort_order: number };
 type Video = {
   id: string;
@@ -85,8 +88,9 @@ export default function AdminVideosPage() {
   const [sortOrder, setSortOrder] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState('');
 
-  // Which video row is expanded for editing
+  // Which video's edit modal is open
   const [editingId, setEditingId] = useState<string | null>(null);
+  const editingVideo = useMemo(() => videos.find((v) => v.id === editingId) ?? null, [videos, editingId]);
 
   async function load() {
     setLoading(true);
@@ -345,10 +349,10 @@ export default function AdminVideosPage() {
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setEditingId(editingId === v.id ? null : v.id)}
+                    onClick={() => setEditingId(v.id)}
                     className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
                   >
-                    {editingId === v.id ? 'Close' : 'Edit'}
+                    Edit
                   </button>
                   <button
                     disabled={busyId === v.id}
@@ -359,28 +363,35 @@ export default function AdminVideosPage() {
                   </button>
                 </div>
               </div>
-
-              {editingId === v.id && (
-                <VideoEditPanel video={v} onSaved={load} onError={setError} />
-              )}
             </div>
           ))
         )}
       </div>
+
+      {editingVideo && (
+        <Modal title={`Edit "${editingVideo.title}"`} subtitle="Classes" onClose={() => setEditingId(null)} wide>
+          <VideoEditPanel video={editingVideo} boards={boards} onSaved={load} onError={setError} />
+        </Modal>
+      )}
     </div>
   );
 }
 
 function VideoEditPanel({
   video,
+  boards,
   onSaved,
   onError,
 }: {
   video: Video;
+  boards: Board[];
   onSaved: () => void;
   onError: (msg: string) => void;
 }) {
   const [title, setTitle] = useState(video.title);
+  const [boardId, setBoardId] = useState(video.board_id);
+  const orderedBoards = useMemo(() => orderBoardsHierarchically(boards), [boards]);
+  const currentBoard = useMemo(() => boards.find((b) => b.id === boardId), [boards, boardId]);
   const [description, setDescription] = useState(video.description ?? '');
   const [thumbnailUrl, setThumbnailUrl] = useState(video.thumbnail_url ?? '');
   const [editProvider, setEditProvider] = useState<'bunny' | 'youtube' | 'mp4'>(
@@ -429,6 +440,7 @@ function VideoEditPanel({
     setSaving(true);
     const patch: Record<string, unknown> = {
       title,
+      board_id: boardId,
       description: description || null,
       thumbnail_url: thumbnailUrl || null,
       sort_order: sortOrder,
@@ -483,10 +495,37 @@ function VideoEditPanel({
   }
 
   return (
-    <div className="border-t border-vault-border bg-vault-800/50 p-5">
+    <div>
       <form onSubmit={saveDetails} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Title">
           <input value={title} onChange={(e) => setTitle(e.target.value)} className="input" required />
+        </Field>
+        <Field label="Board (this class belongs to)">
+          <select value={boardId} onChange={(e) => setBoardId(e.target.value)} className="input" required>
+            {orderedBoards.map((b) => (
+              <option key={b.id} value={b.id}>
+                {'—'.repeat(b.depth)}
+                {b.depth > 0 ? ' ' : ''}
+                {b.title}
+              </option>
+            ))}
+          </select>
+          {/* Classes don't have their own access list — who can watch this
+              one follows whichever board it's attached to. Restricted per
+              board, not per class, so this is a status readout + a link
+              rather than another checklist to keep in sync. */}
+          <p className="mt-1 text-xs text-ink-faint">
+            {currentBoard?.visibility === 'restricted' ? (
+              <>
+                Restricted — access is managed on the board, not the class.{' '}
+                <Link href={`/admin/access`} className="underline decoration-dotted hover:text-signal">
+                  Manage who can see it
+                </Link>
+              </>
+            ) : (
+              'Universal — visible to every authorized user, via this board.'
+            )}
+          </p>
         </Field>
         <div className="sm:col-span-2">
           <Field label="Video source">

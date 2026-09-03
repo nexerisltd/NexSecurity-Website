@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 const FEATURES = [
   {
     title: 'Structured Boards',
-    description: 'Organize topics in a clean hierarchy that&apos;s easy to navigate.',
+    description: "Organize topics in a clean hierarchy that's easy to navigate.",
     icon: (
       <g stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="m12 3 8 4-8 4-8-4 8-4Z" />
@@ -169,7 +169,7 @@ export default async function HomePage() {
       {/* Hero */}
       <section className="relative overflow-hidden bg-grid bg-[size:32px_32px]">
         {isMember ? (
-          <div className="mx-auto grid max-w-6xl gap-10 px-6 py-16 lg:grid-cols-2 lg:items-center">
+          <div className="mx-auto grid max-w-screen-2xl gap-14 px-6 py-20 lg:grid-cols-2 lg:items-center">
             <div>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-signal/20 bg-signal/10 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.15em] text-signal">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -178,19 +178,19 @@ export default async function HomePage() {
                 </svg>
                 Private Learning Space
               </span>
-              <h1 className="mt-4 font-display text-4xl font-semibold leading-tight text-ink sm:text-5xl">
+              <h1 className="mt-5 font-display text-5xl font-semibold leading-tight text-ink sm:text-6xl">
                 A learning platform built for one thing: keeping your{' '}
                 <span className="text-signal">classes private.</span>
               </h1>
-              <p className="mt-5 max-w-xl text-base leading-relaxed text-ink-dim">
+              <p className="mt-6 max-w-2xl text-base leading-relaxed text-ink-dim">
                 Every board, page, and class here is behind a server-verified allowlist. No public
                 links, no guessable URLs — if you&apos;re not an authorized member, there&apos;s
                 nothing to see.
               </p>
-              <div className="mt-8 flex items-center gap-3">
+              <div className="mt-9 flex items-center gap-3">
                 <Link
                   href="/learn"
-                  className="inline-flex items-center gap-2 rounded-lg bg-signal px-6 py-3 text-sm font-medium text-white transition hover:bg-signal-glow"
+                  className="inline-flex items-center gap-2 rounded-lg bg-signal px-7 py-3.5 text-sm font-medium text-white transition hover:bg-signal-glow"
                 >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path
@@ -205,7 +205,7 @@ export default async function HomePage() {
                 </Link>
                 <Link
                   href="/learn"
-                  className="inline-flex items-center gap-2 rounded-lg border border-vault-border px-6 py-3 text-sm font-medium text-ink-dim transition hover:border-signal hover:text-ink"
+                  className="inline-flex items-center gap-2 rounded-lg border border-vault-border px-7 py-3.5 text-sm font-medium text-ink-dim transition hover:border-signal hover:text-ink"
                 >
                   See learning paths
                 </Link>
@@ -215,7 +215,7 @@ export default async function HomePage() {
             <BoardsOverviewPanel boards={overviewBoards} activity={overviewActivity} />
           </div>
         ) : (
-          <div className="mx-auto max-w-6xl px-6 py-24 text-center">
+          <div className="mx-auto max-w-screen-2xl px-6 py-24 text-center">
             <p className="font-mono text-xs uppercase tracking-[0.25em] text-signal-glow">
               Private Learning Space
             </p>
@@ -245,14 +245,19 @@ export default async function HomePage() {
         )}
       </section>
 
-      {/* Stats */}
-      <section className="border-y border-vault-border bg-vault-900">
-        <div className="mx-auto grid max-w-6xl grid-cols-3 gap-6 px-6 py-10">
+      {/* Stats — an inset floating glass panel (matches the nav/hero-panel
+          treatment) instead of a full-bleed border-y bar. A full-bleed
+          opaque bg-vault-900 slab sat directly on top of the page glow and
+          blocked it edge-to-edge, which is what turned this into a flat,
+          disconnected band. Floating it as a card lets the glow show on
+          both sides, the same way it does in the reference design. */}
+      <section className="px-6 py-12">
+        <div className="glass-panel-solid mx-auto grid max-w-screen-2xl grid-cols-3 gap-8 rounded-2xl px-8 py-10 sm:px-14 sm:py-12">
           {stats.map((stat) => (
             <div key={stat.label} className="flex items-center gap-3">
               <div>
-                <p className="font-display text-2xl font-semibold text-ink sm:text-3xl">{stat.value}</p>
-                <p className="text-xs text-ink-faint">{stat.label}</p>
+                <p className="font-display text-3xl font-semibold text-ink sm:text-4xl">{stat.value}</p>
+                <p className="mt-1 text-sm text-ink-faint">{stat.label}</p>
               </div>
             </div>
           ))}
@@ -260,7 +265,7 @@ export default async function HomePage() {
       </section>
 
       {/* What's inside */}
-      <section id="paths" className="mx-auto max-w-6xl px-6 py-20">
+      <section id="paths" className="mx-auto max-w-screen-2xl px-6 py-24">
         <p className="text-center font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
           What&apos;s inside
         </p>
@@ -272,27 +277,30 @@ export default async function HomePage() {
           many, all the way down to the class itself.
         </p>
 
-        <div className="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-12 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {FEATURES.map((feature) => (
             <div
               key={feature.title}
-              className="rounded-xl border border-vault-border bg-vault-900 p-5 transition hover:border-signal/50 backdrop-blur-xl shadow-glass"
+              className="rounded-xl border border-vault-border bg-vault-900 p-7 transition hover:border-signal/50 backdrop-blur-xl shadow-glass"
             >
-              <span className={`flex h-10 w-10 items-center justify-center rounded-lg ${feature.bg} ${feature.fg}`}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <span className={`flex h-12 w-12 items-center justify-center rounded-lg ${feature.bg} ${feature.fg}`}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   {feature.icon}
                 </svg>
               </span>
-              <h3 className="mt-4 font-display text-sm font-medium text-ink">{feature.title}</h3>
-              <p className="mt-1 text-xs text-ink-dim">{feature.description}</p>
+              <h3 className="mt-5 font-display text-base font-medium text-ink">{feature.title}</h3>
+              <p className="mt-2 text-sm text-ink-dim">{feature.description}</p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Reviews */}
-      <section id="reviews" className="border-t border-vault-border bg-vault-900">
-        <div className="mx-auto max-w-6xl px-6 py-20">
+      {/* Reviews — no more full-bleed bg-vault-900 slab (same flat-band
+          issue as Stats above); the section now sits directly on the
+          page's continuous glow, with only the individual review cards
+          providing surface contrast. */}
+      <section id="reviews" className="mx-auto max-w-screen-2xl px-6 py-24">
+        <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
             From our members
           </p>
@@ -300,7 +308,7 @@ export default async function HomePage() {
             What it&apos;s like on the inside
           </h2>
 
-          <div className="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-3">
+          <div className="mt-12 grid grid-cols-1 gap-6 sm:grid-cols-3">
             {[
               {
                 quote:
@@ -318,9 +326,9 @@ export default async function HomePage() {
                 name: 'Member review',
               },
             ].map((review, i) => (
-              <div key={i} className="rounded-xl border border-vault-border bg-vault-800 p-5">
+              <div key={i} className="rounded-xl border border-vault-border bg-vault-800 p-7">
                 <p className="text-sm leading-relaxed text-ink-dim">&ldquo;{review.quote}&rdquo;</p>
-                <p className="mt-4 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+                <p className="mt-5 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
                   {review.name}
                 </p>
               </div>
@@ -333,7 +341,7 @@ export default async function HomePage() {
       </section>
 
       {/* FAQ */}
-      <section id="faq" className="mx-auto max-w-3xl px-6 py-20">
+      <section id="faq" className="mx-auto max-w-3xl px-6 py-24">
         <p className="text-center font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
           Questions
         </p>
@@ -341,7 +349,7 @@ export default async function HomePage() {
           Frequently asked
         </h2>
 
-        <div className="mt-10 space-y-4">
+        <div className="mt-12 space-y-5">
           <FaqItem
             q="How do I get access?"
             a="Membership is invite-only. An administrator adds your email to the allowlist, and you sign in with that same Google account."
@@ -357,10 +365,32 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="border-t border-vault-border">
-        <div className="mx-auto max-w-6xl px-6 py-20 text-center">
-          <h2 className="font-display text-2xl font-semibold text-ink sm:text-3xl">
+      {/* CTA — a self-contained radial-glow panel (rounded, inset from the
+          page edges) instead of a flat full-bleed strip, matching the
+          reference design's closing "Welcome back" card. The glow here is
+          its own stronger gradient rather than relying on the page-wide
+          body::before, since this section is meant to read as the single
+          brightest moment on the page. */}
+      <section className="px-6 pb-24 pt-4">
+        <div
+          className="relative mx-auto max-w-screen-2xl overflow-hidden rounded-3xl border border-vault-border px-6 py-20 text-center shadow-glass"
+          style={{
+            background:
+              'radial-gradient(700px circle at 50% 120%, rgba(65,122,248,0.55), transparent 60%), radial-gradient(500px circle at 15% -20%, rgba(122,89,255,0.35), transparent 60%), linear-gradient(180deg, rgba(20,45,110,0.55) 0%, rgba(10,25,70,0.75) 100%)',
+          }}
+        >
+          <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-white/10 text-signal-glow backdrop-blur-sm">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="m12 4 9 4-9 4-9-4 9-4Zm-6 6.2V16c0 1.1 2.7 3 6 3s6-1.9 6-3v-5.8"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <h2 className="mt-5 font-display text-2xl font-semibold text-ink sm:text-3xl">
             {isMember ? 'Welcome back.' : 'Already a member?'}
           </h2>
           <p className="mt-2 text-sm text-ink-dim">
@@ -370,7 +400,7 @@ export default async function HomePage() {
           </p>
           <Link
             href={isMember ? '/learn' : '/login'}
-            className="mt-6 inline-block rounded-lg bg-signal px-6 py-3 text-sm font-medium text-white transition hover:bg-signal-glow"
+            className="mt-7 inline-block rounded-lg bg-signal px-8 py-3.5 text-sm font-medium text-white shadow-glow transition hover:bg-signal-glow"
           >
             {isMember ? 'Go to Learn' : 'Member sign in'}
           </Link>
@@ -384,9 +414,9 @@ export default async function HomePage() {
 
 function FaqItem({ q, a }: { q: string; a: string }) {
   return (
-    <div className="rounded-xl border border-vault-border bg-vault-900 p-5 backdrop-blur-xl shadow-glass">
-      <p className="font-display text-sm font-medium text-ink">{q}</p>
-      <p className="mt-2 text-sm leading-relaxed text-ink-dim">{a}</p>
+    <div className="rounded-xl border border-vault-border bg-vault-900 p-6 backdrop-blur-xl shadow-glass">
+      <p className="font-display text-base font-medium text-ink">{q}</p>
+      <p className="mt-2.5 text-sm leading-relaxed text-ink-dim">{a}</p>
     </div>
   );
 }

@@ -76,6 +76,22 @@ body::before {
   background: rgba(65, 122, 248, 0.35);
 }
 
+/* Native <select> dropdown popups are drawn by the OS/browser outside
+   the page's own DOM — our translucent glass background-colors
+   (vault-800/900 etc. are all rgba with heavy alpha, meant to blur
+   whatever's behind them) can't render there at all, so every <option>
+   list was coming out as near-white, barely-readable text on a
+   washed-out pale background. The closed <select> box itself still
+   uses the normal glass styling; this only fixes the OPEN list, with a
+   solid (non-transparent) dark background made specifically for it. */
+select {
+  color-scheme: dark;
+}
+select option {
+  background-color: #0e2038;
+  color: #f3f6fc;
+}
+
 :focus-visible {
   outline: 2px solid #417af8;
   outline-offset: 2px;

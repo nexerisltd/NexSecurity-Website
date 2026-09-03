@@ -37,7 +37,7 @@ export default async function LearnPage() {
   );
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-10">
+    <main className="mx-auto max-w-screen-2xl px-6 py-10">
       <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
         Learn
       </p>

@@ -4,7 +4,7 @@ import Image from 'next/image';
 export function PublicFooter() {
   return (
     <footer className="border-t border-vault-border bg-vault-900/40 backdrop-blur-2xl backdrop-saturate-150">
-      <div className="mx-auto max-w-6xl px-6 py-12">
+      <div className="mx-auto max-w-screen-2xl px-6 py-12">
         <div className="grid grid-cols-1 gap-10 sm:grid-cols-4">
           <div className="sm:col-span-2">
             <div className="flex items-center gap-2.5">

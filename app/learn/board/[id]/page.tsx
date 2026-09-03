@@ -161,14 +161,14 @@ export default async function BoardPage({ params }: { params: { id: string } }) 
   if (!hasVideos && !hasEbooks) {
     // Published leaf board with nothing attached yet.
     return (
-      <main className="mx-auto max-w-6xl px-6 py-16 text-center">
+      <main className="mx-auto max-w-screen-2xl px-6 py-16 text-center">
         <p className="text-sm text-ink-dim">This board doesn&apos;t have any content yet.</p>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-10">
+    <main className="mx-auto max-w-screen-2xl px-6 py-10">
       <h1 className="font-display text-2xl font-semibold text-ink">{board.title}</h1>
       {board.description && <p className="mt-2 max-w-2xl text-sm text-ink-dim">{board.description}</p>}
 
@@ -201,7 +201,7 @@ function BoardListView({
   items: { id: string; title: string; description?: string | null; thumbnail_url?: string | null }[];
 }) {
   return (
-    <main className="mx-auto max-w-6xl px-6 py-10">
+    <main className="mx-auto max-w-screen-2xl px-6 py-10">
       <h1 className="font-display text-2xl font-semibold text-ink">{heading}</h1>
       {description && <p className="mt-2 max-w-2xl text-sm text-ink-dim">{description}</p>}
 

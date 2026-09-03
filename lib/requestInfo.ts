@@ -43,24 +43,29 @@ export function getClientIp(): string {
 
 /**
  * A human-readable "device" label derived from the User-Agent header: OS +
- * browser family (e.g. "Windows · Chrome", "Android · Chrome").
+ * browser family (e.g. "Windows · Chrome", "Android · Chrome") — and, when
+ * the browser is willing to share it, the actual hardware model too (e.g.
+ * "Android (Pixel 7) · Chrome").
  *
- * IMPORTANT: this is NOT a hardware device model, and — unlike before —
- * it is NOT part of device identity either. Modern browsers deliberately
- * no longer expose real hardware model info (Chrome's User-Agent
- * Reduction, Safari, etc.), and IP/UA combos break the moment a phone
- * hops from wifi to mobile data. Actual identity is getDeviceId() above
- * (the planted cookie); this label only makes that id readable to a
- * human admin in the panel ("Windows · Chrome" instead of a bare UUID).
+ * IMPORTANT: this is NOT part of device identity, only a label — see
+ * getDeviceId() above for the real thing. And the hardware model piece is
+ * only ever available from Chromium browsers on Android via the
+ * Sec-CH-UA-Model Client Hint (opted into in middleware.ts) — Safari
+ * (iOS/macOS), Firefox, and desktop Chrome/Edge never send a model at all,
+ * by deliberate browser policy, not a bug here. This is the same wall
+ * every web app runs into (including Google's own "you're signed in on
+ * these devices" page for browser sessions) — a phone model shown there
+ * for a NATIVE app comes from Play Services/App attestation, not the web.
  */
 export function getDeviceLabel(): string {
   const h = headers();
   const ua = h.get('user-agent') ?? '';
   const platformHint = h.get('sec-ch-ua-platform');
-  return parseDeviceLabel(ua, platformHint);
+  const modelHint = h.get('sec-ch-ua-model');
+  return parseDeviceLabel(ua, platformHint, modelHint);
 }
 
-export function parseDeviceLabel(ua: string, platformHint?: string | null): string {
+export function parseDeviceLabel(ua: string, platformHint?: string | null, modelHint?: string | null): string {
   if (!ua && !platformHint) return 'Unknown device';
 
   // Sec-CH-UA-Platform (sent by default on every Chromium-based browser —
@@ -93,5 +98,12 @@ export function parseDeviceLabel(ua: string, platformHint?: string | null): stri
   else if (/firefox\//i.test(ua)) browser = 'Firefox';
   else if (/safari\//i.test(ua) && !/chrome\//i.test(ua)) browser = 'Safari';
 
-  return `${os} · ${browser}`;
+  // Sec-CH-UA-Model, when the browser actually sends it (Android Chrome
+  // and Chromium-based browsers ONLY, and only after Accept-CH has opted
+  // in — see middleware.ts): a raw hardware model string like "Pixel 7"
+  // or "SM-G991B". Slot it in next to the OS when present.
+  const model = modelHint?.replace(/"/g, '').trim();
+  const osWithModel = model ? `${os} (${model})` : os;
+
+  return `${osWithModel} · ${browser}`;
 }

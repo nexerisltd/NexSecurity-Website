@@ -1,11 +1,19 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { ThumbnailUpload } from '@/components/ThumbnailUpload';
 import { SearchInput } from '@/components/SearchInput';
+import { Modal } from '@/components/Modal';
 import { orderBoardsHierarchically } from '@/lib/boardTree';
 
-type Board = { id: string; title: string; parent_id: string | null; sort_order: number };
+type Board = {
+  id: string;
+  title: string;
+  parent_id: string | null;
+  sort_order: number;
+  visibility?: 'universal' | 'restricted';
+};
 
 type EBook = {
   id: string;
@@ -40,6 +48,7 @@ export default function AdminEBooksPage() {
   const [search, setSearch] = useState('');
 
   const orderedBoards = useMemo(() => orderBoardsHierarchically(boards), [boards]);
+  const editingEbook = useMemo(() => ebooks.find((eb) => eb.id === editingId) ?? null, [ebooks, editingId]);
 
   const filteredEbooks = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -241,18 +250,154 @@ export default function AdminEBooksPage() {
                   </p>
                 </div>
               </div>
-              <button
-                disabled={busyId === eb.id}
-                onClick={() => removeEBook(eb.id)}
-                className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
-              >
-                Delete
-              </button>
+              <div className="flex shrink-0 gap-2">
+                <button
+                  onClick={() => setEditingId(eb.id)}
+                  className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+                >
+                  Edit
+                </button>
+                <button
+                  disabled={busyId === eb.id}
+                  onClick={() => removeEBook(eb.id)}
+                  className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           ))
         )}
       </div>
+
+      {editingEbook && (
+        <Modal title={`Edit "${editingEbook.title}"`} subtitle="E-Books" onClose={() => setEditingId(null)} wide>
+          <EBookEditPanel ebook={editingEbook} boards={boards} onSaved={load} onError={setError} onDone={() => setEditingId(null)} />
+        </Modal>
+      )}
     </div>
+  );
+}
+
+function EBookEditPanel({
+  ebook,
+  boards,
+  onSaved,
+  onError,
+  onDone,
+}: {
+  ebook: EBook;
+  boards: Board[];
+  onSaved: () => void;
+  onError: (msg: string) => void;
+  onDone: () => void;
+}) {
+  const [title, setTitle] = useState(ebook.title);
+  const [boardId, setBoardId] = useState(ebook.board_id);
+  const [thumbnailUrl, setThumbnailUrl] = useState(ebook.thumbnail_url ?? '');
+  const [downloadUrl, setDownloadUrl] = useState(ebook.download_url ?? '');
+  const [format, setFormat] = useState(ebook.format);
+  const [price, setPrice] = useState(String(ebook.price));
+  const [description, setDescription] = useState(ebook.description ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const orderedBoards = useMemo(() => orderBoardsHierarchically(boards), [boards]);
+  const currentBoard = useMemo(() => boards.find((b) => b.id === boardId), [boards, boardId]);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    const res = await fetch(`/api/admin/ebooks/${ebook.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title,
+        board_id: boardId,
+        thumbnail_url: thumbnailUrl || null,
+        download_url: downloadUrl || null,
+        format,
+        price: Number(price) || 0,
+        description: description || null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      onError(data.error ?? 'Could not update e-book.');
+      setSaving(false);
+      return;
+    }
+    setSaving(false);
+    onSaved();
+    onDone();
+  }
+
+  return (
+    <form onSubmit={save} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <Field label="Title">
+        <input required value={title} onChange={(e) => setTitle(e.target.value)} className="input" />
+      </Field>
+      <Field label="Board">
+        <select required value={boardId} onChange={(e) => setBoardId(e.target.value)} className="input">
+          {orderedBoards.map((b) => (
+            <option key={b.id} value={b.id}>
+              {'—'.repeat(b.depth)}
+              {b.depth > 0 ? ' ' : ''}
+              {b.title}
+            </option>
+          ))}
+        </select>
+        {/* E-books don't have their own access list — same as classes,
+            who can see it follows the board it's attached to. */}
+        <p className="mt-1 text-xs text-ink-faint">
+          {currentBoard?.visibility === 'restricted' ? (
+            <>
+              Restricted — access is managed on the board, not the e-book.{' '}
+              <Link href="/admin/access" className="underline decoration-dotted hover:text-signal">
+                Manage who can see it
+              </Link>
+            </>
+          ) : (
+            'Universal — visible to every authorized user, via this board.'
+          )}
+        </p>
+      </Field>
+      <div className="sm:col-span-2">
+        <Field label="Thumbnail (portrait, 3:4)">
+          <ThumbnailUpload value={thumbnailUrl} onChange={setThumbnailUrl} />
+        </Field>
+      </div>
+      <Field label="Download link (optional, https)">
+        <input value={downloadUrl} onChange={(e) => setDownloadUrl(e.target.value)} placeholder="https://..." className="input" />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Format">
+          <select value={format} onChange={(e) => setFormat(e.target.value)} className="input">
+            {FORMATS.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Price (0 = Free)">
+          <input type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} className="input" />
+        </Field>
+      </div>
+      <div className="sm:col-span-2">
+        <Field label="Description">
+          <input value={description} onChange={(e) => setDescription(e.target.value)} className="input" />
+        </Field>
+      </div>
+      <div className="sm:col-span-2">
+        <button
+          type="submit"
+          disabled={saving}
+          className="rounded-md bg-signal px-4 py-2 text-sm font-medium text-white transition hover:bg-signal-glow disabled:opacity-60"
+        >
+          {saving ? 'Saving…' : 'Save changes'}
+        </button>
+      </div>
+    </form>
   );
 }
 

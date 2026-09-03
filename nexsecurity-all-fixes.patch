@@ -1,0 +1,294 @@
+diff --git a/app/admin/layout.tsx b/app/admin/layout.tsx
+index 6b100c2..ad260cd 100644
+--- a/app/admin/layout.tsx
++++ b/app/admin/layout.tsx
+@@ -19,7 +19,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
+   return (
+     <div className="min-h-screen bg-vault-950">
+       <TopNav email={auth.email} isAdmin profile={auth.profile} />
+-      <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-8 md:flex-row md:gap-8">
++      <div className="mx-auto flex max-w-screen-2xl flex-col gap-6 px-6 py-8 md:flex-row md:gap-8">
+         <AdminSidebar />
+         <div className="min-w-0 flex-1">{children}</div>
+       </div>
+diff --git a/app/globals.css b/app/globals.css
+index e7d468c..1dcf3af 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -23,6 +23,7 @@ body {
+    ever); scrollbar-gutter: stable is the modern equivalent for browsers
+    that support it. Both target the same fix, so keeping both is safe. */
+ html {
++  overflow-x: hidden;
+   overflow-y: scroll;
+   scrollbar-gutter: stable;
+ }
+@@ -30,7 +31,6 @@ html {
+ body {
+   font-feature-settings: 'ss01' on, 'ss02' on;
+   position: relative;
+-  overflow-x: hidden;
+ }
+ 
+ /* Liquid Glass background: soft, blurred color blobs fixed behind every
+@@ -41,15 +41,35 @@ body {
+    what makes them read as floating glass rather than flat dark cards. */
+ body::before {
+   content: '';
+-  position: fixed;
++  /* position: absolute (not fixed) against body's own box — body already
++     has position: relative below — so this pseudo-element's height
++     resolves to the FULL document height (all sections stacked), not
++     just one viewport. With `fixed` the glow blobs placed at 60%/88%/108%
++     below all lived past the bottom of the first screenful and never
++     rendered, which is why the stats/reviews/FAQ sections read as flat,
++     glow-less slabs while only the hero (inside that first viewport)
++     showed any color variation. */
++  position: absolute;
+   inset: 0;
+   z-index: -1;
+   pointer-events: none;
+-  background:
+-    radial-gradient(700px circle at 10% 6%, rgba(65, 122, 248, 0.22), transparent 60%),
+-    radial-gradient(600px circle at 92% 16%, rgba(121, 160, 255, 0.16), transparent 55%),
+-    radial-gradient(800px circle at 55% 100%, rgba(122, 89, 255, 0.14), transparent 60%),
+-    linear-gradient(180deg, #071a38 0%, #050e1f 55%, #030a17 100%);
++  /* Glow blobs are spread across the FULL scroll height so sections far
++     down the page (stats, reviews, FAQ, the closing CTA) still sit on
++     visible color instead of fading to flat near-black. The base
++     linear-gradient also stays in a lighter navy band the whole way down
++     instead of crushing to #030a17 by mid-page, which is what was making
++     every section below the hero read as a flat, disconnected slab
++     rather than one continuous atmosphere. */
++  background-image:
++    radial-gradient(650px circle at 12% 4%, rgba(65, 122, 248, 0.26), transparent 62%),
++    radial-gradient(550px circle at 90% 10%, rgba(121, 160, 255, 0.18), transparent 58%),
++    radial-gradient(600px circle at 8% 46%, rgba(65, 122, 248, 0.14), transparent 60%),
++    radial-gradient(650px circle at 95% 60%, rgba(122, 89, 255, 0.15), transparent 60%),
++    radial-gradient(700px circle at 15% 88%, rgba(65, 122, 248, 0.16), transparent 60%),
++    radial-gradient(900px circle at 60% 108%, rgba(122, 89, 255, 0.22), transparent 60%),
++    linear-gradient(180deg, #071a38 0%, #0a2142 40%, #081a38 75%, #050e1f 100%);
++  background-repeat: no-repeat;
++  background-size: 100% 100%;
+ }
+ 
+ @layer components {
+diff --git a/app/learn/board/[id]/page.tsx b/app/learn/board/[id]/page.tsx
+index d40932d..d2c7862 100644
+--- a/app/learn/board/[id]/page.tsx
++++ b/app/learn/board/[id]/page.tsx
+@@ -161,14 +161,14 @@ export default async function BoardPage({ params }: { params: { id: string } })
+   if (!hasVideos && !hasEbooks) {
+     // Published leaf board with nothing attached yet.
+     return (
+-      <main className="mx-auto max-w-6xl px-6 py-16 text-center">
++      <main className="mx-auto max-w-screen-2xl px-6 py-16 text-center">
+         <p className="text-sm text-ink-dim">This board doesn&apos;t have any content yet.</p>
+       </main>
+     );
+   }
+ 
+   return (
+-    <main className="mx-auto max-w-6xl px-6 py-10">
++    <main className="mx-auto max-w-screen-2xl px-6 py-10">
+       <h1 className="font-display text-2xl font-semibold text-ink">{board.title}</h1>
+       {board.description && <p className="mt-2 max-w-2xl text-sm text-ink-dim">{board.description}</p>}
+ 
+@@ -201,7 +201,7 @@ function BoardListView({
+   items: { id: string; title: string; description?: string | null; thumbnail_url?: string | null }[];
+ }) {
+   return (
+-    <main className="mx-auto max-w-6xl px-6 py-10">
++    <main className="mx-auto max-w-screen-2xl px-6 py-10">
+       <h1 className="font-display text-2xl font-semibold text-ink">{heading}</h1>
+       {description && <p className="mt-2 max-w-2xl text-sm text-ink-dim">{description}</p>}
+ 
+diff --git a/app/learn/ebooks/page.tsx b/app/learn/ebooks/page.tsx
+index 02b0cb7..3e33998 100644
+--- a/app/learn/ebooks/page.tsx
++++ b/app/learn/ebooks/page.tsx
+@@ -45,7 +45,7 @@ export default async function EBooksPage() {
+   }
+ 
+   return (
+-    <main className="mx-auto max-w-6xl px-6 py-10">
++    <main className="mx-auto max-w-screen-2xl px-6 py-10">
+       <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
+         Digital Library
+       </p>
+diff --git a/app/learn/page.tsx b/app/learn/page.tsx
+index 419caaf..46a8b3c 100644
+--- a/app/learn/page.tsx
++++ b/app/learn/page.tsx
+@@ -37,7 +37,7 @@ export default async function LearnPage() {
+   );
+ 
+   return (
+-    <main className="mx-auto max-w-6xl px-6 py-10">
++    <main className="mx-auto max-w-screen-2xl px-6 py-10">
+       <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
+         Learn
+       </p>
+diff --git a/app/learn/video/[id]/page.tsx b/app/learn/video/[id]/page.tsx
+index ece439e..baab1f1 100644
+--- a/app/learn/video/[id]/page.tsx
++++ b/app/learn/video/[id]/page.tsx
+@@ -144,7 +144,7 @@ export default async function VideoPage({ params }: { params: { id: string } })
+   }
+ 
+   return (
+-    <main className="mx-auto max-w-6xl px-6 py-8">
++    <main className="mx-auto max-w-screen-2xl px-6 py-8">
+       <nav className="flex flex-wrap items-center gap-1.5 text-sm text-ink-faint">
+         <Link href="/learn" className="text-signal hover:underline">
+           Learn
+diff --git a/app/page.tsx b/app/page.tsx
+index df556c5..80970af 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -169,7 +169,7 @@ export default async function HomePage() {
+       {/* Hero */}
+       <section className="relative overflow-hidden bg-grid bg-[size:32px_32px]">
+         {isMember ? (
+-          <div className="mx-auto grid max-w-6xl gap-10 px-6 py-16 lg:grid-cols-2 lg:items-center">
++          <div className="mx-auto grid max-w-screen-2xl gap-10 px-6 py-16 lg:grid-cols-2 lg:items-center">
+             <div>
+               <span className="inline-flex items-center gap-1.5 rounded-full border border-signal/20 bg-signal/10 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.15em] text-signal">
+                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+@@ -215,7 +215,7 @@ export default async function HomePage() {
+             <BoardsOverviewPanel boards={overviewBoards} activity={overviewActivity} />
+           </div>
+         ) : (
+-          <div className="mx-auto max-w-6xl px-6 py-24 text-center">
++          <div className="mx-auto max-w-screen-2xl px-6 py-24 text-center">
+             <p className="font-mono text-xs uppercase tracking-[0.25em] text-signal-glow">
+               Private Learning Space
+             </p>
+@@ -245,9 +245,14 @@ export default async function HomePage() {
+         )}
+       </section>
+ 
+-      {/* Stats */}
+-      <section className="border-y border-vault-border bg-vault-900">
+-        <div className="mx-auto grid max-w-6xl grid-cols-3 gap-6 px-6 py-10">
++      {/* Stats — an inset floating glass panel (matches the nav/hero-panel
++          treatment) instead of a full-bleed border-y bar. A full-bleed
++          opaque bg-vault-900 slab sat directly on top of the page glow and
++          blocked it edge-to-edge, which is what turned this into a flat,
++          disconnected band. Floating it as a card lets the glow show on
++          both sides, the same way it does in the reference design. */}
++      <section className="px-6 py-10">
++        <div className="glass-panel-solid mx-auto grid max-w-screen-2xl grid-cols-3 gap-6 rounded-2xl px-6 py-8 sm:px-10">
+           {stats.map((stat) => (
+             <div key={stat.label} className="flex items-center gap-3">
+               <div>
+@@ -260,7 +265,7 @@ export default async function HomePage() {
+       </section>
+ 
+       {/* What's inside */}
+-      <section id="paths" className="mx-auto max-w-6xl px-6 py-20">
++      <section id="paths" className="mx-auto max-w-screen-2xl px-6 py-20">
+         <p className="text-center font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
+           What&apos;s inside
+         </p>
+@@ -290,9 +295,12 @@ export default async function HomePage() {
+         </div>
+       </section>
+ 
+-      {/* Reviews */}
+-      <section id="reviews" className="border-t border-vault-border bg-vault-900">
+-        <div className="mx-auto max-w-6xl px-6 py-20">
++      {/* Reviews — no more full-bleed bg-vault-900 slab (same flat-band
++          issue as Stats above); the section now sits directly on the
++          page's continuous glow, with only the individual review cards
++          providing surface contrast. */}
++      <section id="reviews" className="mx-auto max-w-screen-2xl px-6 py-20">
++        <div>
+           <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">
+             From our members
+           </p>
+@@ -357,10 +365,32 @@ export default async function HomePage() {
+         </div>
+       </section>
+ 
+-      {/* CTA */}
+-      <section className="border-t border-vault-border">
+-        <div className="mx-auto max-w-6xl px-6 py-20 text-center">
+-          <h2 className="font-display text-2xl font-semibold text-ink sm:text-3xl">
++      {/* CTA — a self-contained radial-glow panel (rounded, inset from the
++          page edges) instead of a flat full-bleed strip, matching the
++          reference design's closing "Welcome back" card. The glow here is
++          its own stronger gradient rather than relying on the page-wide
++          body::before, since this section is meant to read as the single
++          brightest moment on the page. */}
++      <section className="px-6 pb-20 pt-4">
++        <div
++          className="relative mx-auto max-w-screen-2xl overflow-hidden rounded-3xl border border-vault-border px-6 py-16 text-center shadow-glass"
++          style={{
++            background:
++              'radial-gradient(700px circle at 50% 120%, rgba(65,122,248,0.55), transparent 60%), radial-gradient(500px circle at 15% -20%, rgba(122,89,255,0.35), transparent 60%), linear-gradient(180deg, rgba(20,45,110,0.55) 0%, rgba(10,25,70,0.75) 100%)',
++          }}
++        >
++          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white/10 text-signal-glow backdrop-blur-sm">
++            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
++              <path
++                d="m12 4 9 4-9 4-9-4 9-4Zm-6 6.2V16c0 1.1 2.7 3 6 3s6-1.9 6-3v-5.8"
++                stroke="currentColor"
++                strokeWidth="1.8"
++                strokeLinecap="round"
++                strokeLinejoin="round"
++              />
++            </svg>
++          </span>
++          <h2 className="mt-4 font-display text-2xl font-semibold text-ink sm:text-3xl">
+             {isMember ? 'Welcome back.' : 'Already a member?'}
+           </h2>
+           <p className="mt-2 text-sm text-ink-dim">
+@@ -370,7 +400,7 @@ export default async function HomePage() {
+           </p>
+           <Link
+             href={isMember ? '/learn' : '/login'}
+-            className="mt-6 inline-block rounded-lg bg-signal px-6 py-3 text-sm font-medium text-white transition hover:bg-signal-glow"
++            className="mt-6 inline-block rounded-lg bg-signal px-6 py-3 text-sm font-medium text-white shadow-glow transition hover:bg-signal-glow"
+           >
+             {isMember ? 'Go to Learn' : 'Member sign in'}
+           </Link>
+diff --git a/components/PublicFooter.tsx b/components/PublicFooter.tsx
+index f423824..870d3ad 100644
+--- a/components/PublicFooter.tsx
++++ b/components/PublicFooter.tsx
+@@ -4,7 +4,7 @@ import Image from 'next/image';
+ export function PublicFooter() {
+   return (
+     <footer className="border-t border-vault-border bg-vault-900/40 backdrop-blur-2xl backdrop-saturate-150">
+-      <div className="mx-auto max-w-6xl px-6 py-12">
++      <div className="mx-auto max-w-screen-2xl px-6 py-12">
+         <div className="grid grid-cols-1 gap-10 sm:grid-cols-4">
+           <div className="sm:col-span-2">
+             <div className="flex items-center gap-2.5">
+diff --git a/components/PublicNav.tsx b/components/PublicNav.tsx
+index 5b810d2..ab2401c 100644
+--- a/components/PublicNav.tsx
++++ b/components/PublicNav.tsx
+@@ -4,7 +4,7 @@ import Image from 'next/image';
+ export function PublicNav({ isMember = false }: { isMember?: boolean }) {
+   return (
+     <header className="relative z-20 border-b border-vault-border bg-vault-900/60 backdrop-blur-2xl backdrop-saturate-150">
+-      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3.5">
++      <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-6 py-3.5">
+         <Link href="/" className="flex items-center gap-2.5">
+           <span className="relative h-8 w-8 overflow-hidden rounded-lg border border-vault-border bg-vault-800 shadow-glass">
+             <Image src="/logo.png" alt="NexSecurity" fill className="object-cover" />
+diff --git a/components/TopNav.tsx b/components/TopNav.tsx
+index 6acb44c..15fe506 100644
+--- a/components/TopNav.tsx
++++ b/components/TopNav.tsx
+@@ -308,7 +308,7 @@ export function TopNav({
+     .join('');
+ 
+   return (
+-    <header className="relative z-30 px-4 pt-3">
++    <header className="sticky top-0 z-30 px-4 pt-3">
+       <div className="glass-panel-solid mx-auto max-w-screen-2xl rounded-2xl">
+         <div className="flex items-center gap-3 px-4 py-3 sm:px-6 md:gap-6">
+         <div className="flex shrink-0 items-center gap-2">

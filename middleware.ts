@@ -33,6 +33,15 @@ export async function middleware(request: NextRequest) {
   // Always refresh the session cookie first.
   const response = await updateSession(request);
 
+  // Opt in to the Sec-CH-UA-Model Client Hint (the closest thing to a
+  // hardware "device model" the web platform exposes at all — Android
+  // Chromium browsers only; nothing else supports it). This is a HIGH
+  // entropy hint, so unlike Sec-CH-UA-Platform it is NOT sent by
+  // default — the browser only starts sending it on requests AFTER it
+  // has seen this header on a same-origin response, so it's set on
+  // every response here to keep it "sticky" across the whole site.
+  response.headers.set('Accept-CH', 'Sec-CH-UA-Model, Sec-CH-UA-Platform-Version');
+
   if (isNewDevice) {
     response.cookies.set(DEVICE_ID_COOKIE, deviceId, DEVICE_ID_COOKIE_OPTIONS);
   }

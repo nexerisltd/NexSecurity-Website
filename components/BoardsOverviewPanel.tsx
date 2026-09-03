@@ -52,7 +52,7 @@ const ICON_PATHS = [
 function IconBadge({ index }: { index: number }) {
   const color = PALETTE[index % PALETTE.length];
   return (
-    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${color.bg} ${color.fg}`}>
+    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${color.bg} ${color.fg}`}>
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         {ICON_PATHS[index % ICON_PATHS.length]}
       </svg>
@@ -68,7 +68,7 @@ export function BoardsOverviewPanel({
   activity: OverviewActivity[];
 }) {
   return (
-    <div className="glass-panel-solid rounded-2xl p-5">
+    <div className="glass-panel-solid rounded-2xl p-7">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-sm font-semibold text-ink">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -82,8 +82,8 @@ export function BoardsOverviewPanel({
         <span className="text-xs font-medium text-ink-faint">Recent Activity</span>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-x-6 gap-y-3.5 sm:grid-cols-2">
-        <div className="space-y-3.5">
+      <div className="mt-6 grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
+        <div className="space-y-4">
           {boards.length === 0 ? (
             <p className="text-xs text-ink-faint">No boards published yet.</p>
           ) : (
@@ -103,7 +103,7 @@ export function BoardsOverviewPanel({
           )}
         </div>
 
-        <div className="space-y-3.5">
+        <div className="space-y-4">
           {activity.length === 0 ? (
             <p className="text-xs text-ink-faint">No activity yet.</p>
           ) : (

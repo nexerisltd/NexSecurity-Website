@@ -4,7 +4,7 @@ import Image from 'next/image';
 export function PublicNav({ isMember = false }: { isMember?: boolean }) {
   return (
     <header className="relative z-20 border-b border-vault-border bg-vault-900/60 backdrop-blur-2xl backdrop-saturate-150">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3.5">
+      <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-6 py-3.5">
         <Link href="/" className="flex items-center gap-2.5">
           <span className="relative h-8 w-8 overflow-hidden rounded-lg border border-vault-border bg-vault-800 shadow-glass">
             <Image src="/logo.png" alt="NexSecurity" fill className="object-cover" />
