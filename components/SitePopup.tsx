@@ -52,11 +52,18 @@ export function SitePopup() {
   if (!popup) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-vault-border bg-vault-900 p-6 shadow-glass">
-        {popup.title && <h2 className="font-display text-lg font-semibold text-ink">{popup.title}</h2>}
-        {popup.message && <p className="mt-2 whitespace-pre-line text-sm text-ink-dim">{popup.message}</p>}
-        <div className="mt-5 flex flex-wrap justify-end gap-3">
+    <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/60 px-4 py-8 backdrop-blur-sm sm:items-center">
+      {/* flex-col + a fixed footer means the button row is ALWAYS visible
+          and reachable — only the message text itself scrolls internally
+          when it's too long for the viewport, instead of the whole card
+          (buttons included) overflowing off-screen with no way to reach
+          them. */}
+      <div className="flex max-h-[85vh] w-full max-w-5xl flex-col rounded-2xl border border-vault-border bg-vault-900 shadow-glass">
+        <div className="overflow-y-auto p-6">
+          {popup.title && <h2 className="font-display text-lg font-semibold text-ink">{popup.title}</h2>}
+          {popup.message && <p className="mt-2 whitespace-pre-line text-sm text-ink-dim">{popup.message}</p>}
+        </div>
+        <div className="flex flex-wrap justify-end gap-3 border-t border-vault-border p-4">
           {popup.button_url && (
             <a
               href={popup.button_url}

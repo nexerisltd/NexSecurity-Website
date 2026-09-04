@@ -5,10 +5,20 @@ export const emailSchema = z.string().trim().toLowerCase().email().max(320);
 export const roleSchema = z.enum(['USER', 'ADMIN']);
 export const statusSchema = z.enum(['ACTIVE', 'DISABLED']);
 
-export const addAuthorizedUserSchema = z.object({
-  email: emailSchema,
-  role: roleSchema.default('USER'),
-});
+export const addAuthorizedUserSchema = z
+  .object({
+    email: emailSchema,
+    role: roleSchema.default('USER'),
+    // Free Trial: 'paid' follows the existing flow exactly. 'trial'
+    // requires a duration — the countdown only starts at the account's
+    // first login (see lib/auth.ts), not at creation time.
+    account_type: z.enum(['paid', 'trial']).default('paid'),
+    trial_duration_minutes: z.union([z.literal(5), z.literal(10), z.literal(15), z.literal(20)]).optional(),
+  })
+  .refine((data) => data.account_type !== 'trial' || data.trial_duration_minutes !== undefined, {
+    message: 'Pick a trial duration.',
+    path: ['trial_duration_minutes'],
+  });
 
 export const updateAuthorizedUserSchema = z.object({
   role: roleSchema.optional(),
@@ -147,7 +157,7 @@ export const videoProgressSchema = z.object({
 export const popupSettingsSchema = z.object({
   enabled: z.boolean().default(false),
   title: z.string().trim().max(200).default(''),
-  message: z.string().trim().max(2000).default(''),
+  message: z.string().trim().max(8000).default(''),
   button_label: z.string().trim().min(1).max(60).default('Got it'),
   button_url: safeUrl.optional().nullable(),
   interval_hours: z.number().int().min(1).max(24 * 365).default(24),

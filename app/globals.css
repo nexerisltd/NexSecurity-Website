@@ -131,6 +131,39 @@ select option {
   animation: scan 2.4s ease-in-out infinite;
 }
 
+/* Site-wide scrollbar — the plain OS-default scrollbar (light gray) was
+   clashing hard against this dark glass theme on every scrollable box,
+   not just one popup. Thin, rounded, translucent thumb floating inside
+   its track instead of a flat gray bar, in the same blue the theme
+   already uses for selection/focus. Firefox via scrollbar-color/-width;
+   Chrome/Safari/Edge via the ::-webkit-scrollbar-* pseudo-elements.
+   Applies everywhere (`*`) — .no-scrollbar further down still wins where
+   a scrollbar should stay hidden entirely, since a class selector beats
+   a universal one regardless of order. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(121, 160, 255, 0.35) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(121, 160, 255, 0.35);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(121, 160, 255, 0.55);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* Lets the desktop nav-link strip in TopNav.tsx scroll horizontally
    (rather than force the whole header wider than its container) at
    viewport widths where the links + logo + search/notif/avatar cluster

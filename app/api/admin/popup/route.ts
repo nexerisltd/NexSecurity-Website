@@ -13,7 +13,7 @@ export async function GET() {
 
   const adminClient = createSupabaseAdminClient();
   const { data, error } = await adminClient.from('site_popup_settings').select('*').eq('id', 1).maybeSingle();
-  if (error) return NextResponse.json({ error: 'Could not load popup settings.' }, { status: 400 });
+  if (error) return NextResponse.json({ error: `Could not load popup settings. (${error.message})` }, { status: 400 });
 
   return NextResponse.json({ settings: data });
 }
@@ -35,7 +35,14 @@ export async function PATCH(request: NextRequest) {
 
   const body = await request.json().catch(() => null);
   const parsed = popupSettingsUpdateSchema.safeParse(body);
-  if (!parsed.success) return NextResponse.json({ error: 'Invalid input.' }, { status: 400 });
+  if (!parsed.success) {
+    // Admin-only route, so it's safe (and much more useful than a bare
+    // "Invalid input") to surface exactly which field tripped validation
+    // — e.g. a Button link that isn't a full https:// URL — instead of
+    // making the admin guess.
+    const detail = parsed.error.issues.map((i) => `${i.path.join('.') || 'value'}: ${i.message}`).join('; ');
+    return NextResponse.json({ error: `Invalid input — ${detail}` }, { status: 400 });
+  }
 
   const adminClient = createSupabaseAdminClient();
   const { data: current } = await adminClient.from('site_popup_settings').select('version').eq('id', 1).maybeSingle();
@@ -48,7 +55,12 @@ export async function PATCH(request: NextRequest) {
     .select('*')
     .maybeSingle();
 
-  if (error || !data) return NextResponse.json({ error: 'Could not save popup settings.' }, { status: 400 });
+  if (error || !data) {
+    return NextResponse.json(
+      { error: `Could not save popup settings.${error ? ` (${error.message})` : ''}` },
+      { status: 400 }
+    );
+  }
 
   await logAuditEvent('ADMIN_ACTION', auth.user.email, undefined, { action: 'POPUP_SETTINGS_UPDATED', version: nextVersion });
   return NextResponse.json({ settings: data });

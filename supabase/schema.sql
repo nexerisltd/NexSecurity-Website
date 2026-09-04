@@ -22,6 +22,16 @@ create table if not exists public.authorized_users (
   -- that an admin has explicitly approved in user_devices. Default false
   -- so adding this never locks anyone out until an admin opts an account in.
   restrict_devices boolean not null default false,
+  -- Free trial: 'paid' accounts follow the normal flow untouched. A
+  -- 'trial' account gets trial_duration_minutes set by the admin at
+  -- creation time; trial_started_at/trial_expires_at stay null until the
+  -- account's first-ever login (see lib/auth.ts), then get stamped
+  -- together so the clock starts from actual first use, not from
+  -- whenever the admin happened to create the row.
+  account_type text not null default 'paid' check (account_type in ('paid', 'trial')),
+  trial_duration_minutes integer,
+  trial_started_at timestamptz,
+  trial_expires_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

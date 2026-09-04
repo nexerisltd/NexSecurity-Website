@@ -9,6 +9,10 @@ export type AuthorizedUser = {
   role: 'USER' | 'ADMIN';
   status: 'ACTIVE' | 'DISABLED';
   restrict_devices: boolean;
+  account_type: 'paid' | 'trial';
+  trial_duration_minutes: number | null;
+  trial_started_at: string | null;
+  trial_expires_at: string | null;
 };
 
 export type DeviceStatus = 'pending' | 'authorized' | 'restricted' | 'blocked';
@@ -44,11 +48,12 @@ const IP_HISTORY_LIMIT = 20;
  * decide from instead of a blank list. Never throws into the caller.
  */
 async function upsertDeviceAndGetStatus(
-  userId: string,
+  user: AuthorizedUser,
   deviceId: string,
   ip: string,
   deviceLabel: string
 ): Promise<DeviceStatus> {
+  const userId = user.id;
   try {
     const adminClient = createSupabaseAdminClient();
     const nowIso = new Date().toISOString();
@@ -107,6 +112,21 @@ async function upsertDeviceAndGetStatus(
       first_seen: nowIso,
       last_seen: nowIso,
     });
+
+    // Free Trial: the countdown starts at this exact moment — the
+    // account's first-ever login — not whenever the admin happened to
+    // create the row. Only ever stamped once (guarded by
+    // trial_started_at already being null); every login after the first
+    // leaves it untouched.
+    if (isFirstDeviceEver && user.account_type === 'trial' && !user.trial_started_at && user.trial_duration_minutes) {
+      const startedAt = new Date();
+      const expiresAt = new Date(startedAt.getTime() + user.trial_duration_minutes * 60_000);
+      await adminClient
+        .from('authorized_users')
+        .update({ trial_started_at: startedAt.toISOString(), trial_expires_at: expiresAt.toISOString() })
+        .eq('id', userId);
+    }
+
     return initialStatus;
   } catch (err) {
     console.error('[auth] failed to upsert device', err);
@@ -151,11 +171,28 @@ export async function getAuth(): Promise<AuthResult> {
 
   const { data: authorizedUser } = await supabase
     .from('authorized_users')
-    .select('id, email, role, status, restrict_devices')
+    .select('id, email, role, status, restrict_devices, account_type, trial_duration_minutes, trial_started_at, trial_expires_at')
     .eq('email', user.email.toLowerCase())
     .maybeSingle();
 
   if (!authorizedUser || authorizedUser.status !== 'ACTIVE') {
+    return { state: 'UNAUTHORIZED', email: user.email };
+  }
+
+  // Free Trial expiry — checked on every request rather than a background
+  // job (there's no cron/scheduler in this stack): functionally the same
+  // thing, since there's nothing to expire while nobody's making
+  // requests anyway. The instant a trial account's clock runs out, their
+  // very next request auto-disables the account instead of letting it
+  // through — an admin can re-enable it manually later from Users (doing
+  // so also clears the expiry so it doesn't immediately re-trigger).
+  if (
+    authorizedUser.account_type === 'trial' &&
+    authorizedUser.trial_expires_at &&
+    new Date(authorizedUser.trial_expires_at).getTime() <= Date.now()
+  ) {
+    const adminClient = createSupabaseAdminClient();
+    await adminClient.from('authorized_users').update({ status: 'DISABLED' }).eq('id', authorizedUser.id);
     return { state: 'UNAUTHORIZED', email: user.email };
   }
 
@@ -194,7 +231,7 @@ export async function getAuth(): Promise<AuthResult> {
   if (isRestricted) {
     // Restriction is on for this account: the status decision gates
     // access, so it must be awaited before we can answer.
-    const status = await upsertDeviceAndGetStatus(typedUser.id, deviceId, ip, deviceLabel);
+    const status = await upsertDeviceAndGetStatus(typedUser, deviceId, ip, deviceLabel);
     if (status !== 'authorized') {
       return { state: 'DEVICE_BLOCKED', email: user.email, ip, deviceLabel, deviceStatus: status };
     }
@@ -202,7 +239,7 @@ export async function getAuth(): Promise<AuthResult> {
     // Not restricted — still record the sighting so an admin has real
     // device history to review the moment they turn restriction on, but
     // don't make this request wait on it.
-    void upsertDeviceAndGetStatus(typedUser.id, deviceId, ip, deviceLabel);
+    void upsertDeviceAndGetStatus(typedUser, deviceId, ip, deviceLabel);
   }
 
   return {

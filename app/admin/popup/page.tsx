@@ -60,7 +60,9 @@ export default function AdminPopupPage() {
     setSaving(true);
     setError(null);
     setSaved(false);
-    const interval_hours = intervalUnit === 'days' ? intervalValue * 24 : intervalValue;
+    const safeInterval = Number.isFinite(intervalValue) && intervalValue > 0 ? intervalValue : 1;
+    const interval_hours = intervalUnit === 'days' ? safeInterval * 24 : safeInterval;
+    const trimmedUrl = buttonUrl.trim();
     const res = await fetch('/api/admin/popup', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -68,8 +70,8 @@ export default function AdminPopupPage() {
         enabled,
         title,
         message,
-        button_label: buttonLabel || 'Got it',
-        button_url: buttonUrl || null,
+        button_label: buttonLabel.trim() || 'Got it',
+        button_url: trimmedUrl || null,
         interval_hours,
       }),
     });
@@ -115,13 +117,15 @@ export default function AdminPopupPage() {
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 rows={4}
+                maxLength={8000}
                 className="input resize-y"
                 placeholder="What you want every user to see…"
               />
+              <p className="mt-1 text-right font-mono text-[10px] text-ink-faint">{message.length} / 8000</p>
             </Field>
           </div>
 
-          <Field label="Button link (optional — opens in a new tab)">
+          <Field label="Button link (optional — must start with https://, opens in a new tab)">
             <input value={buttonUrl} onChange={(e) => setButtonUrl(e.target.value)} className="input" placeholder="https://..." />
           </Field>
 

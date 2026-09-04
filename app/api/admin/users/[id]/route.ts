@@ -25,7 +25,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
   const { data: target } = await supabase
     .from('authorized_users')
-    .select('id, email')
+    .select('id, email, account_type, trial_expires_at')
     .eq('id', parsedId.data)
     .maybeSingle();
 
@@ -40,9 +40,21 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     );
   }
 
+  const patch: Record<string, unknown> = { ...parsed.data, updated_at: new Date().toISOString() };
+
+  // Manually re-activating a trial account that had already expired is
+  // an explicit admin override — clear the expiry so it doesn't just get
+  // auto-disabled again on the user's very next request. account_type
+  // stays 'trial' (it's still true, for reporting), only the ENFORCED
+  // cutoff goes away; give them another trial window instead by editing
+  // trial_duration_minutes and clearing trial_started_at.
+  if (parsed.data.status === 'ACTIVE' && target.account_type === 'trial' && target.trial_expires_at) {
+    patch.trial_expires_at = null;
+  }
+
   const { data: updated, error } = await supabase
     .from('authorized_users')
-    .update({ ...parsed.data, updated_at: new Date().toISOString() })
+    .update(patch)
     .eq('id', parsedId.data)
     .select('id, email, role, status')
     .single();
