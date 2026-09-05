@@ -18,6 +18,44 @@ export const dynamic = 'force-dynamic';
 // this is mostly headroom, not an expectation of actually needing it.
 export const maxDuration = 60;
 
+// requireAuthorized() re-validates the session against Supabase's Auth
+// server on every call (see the getUser() comment in lib/auth.ts) — the
+// right call for an ordinary page load or API hit, but HLS turns one
+// video into dozens of independent requests (one per segment, every few
+// seconds) in quick succession. Running the full check on every single
+// one of those was enough to trip Supabase Auth's own rate limit
+// (`over_request_rate_limit`), which then made *every* route's session
+// check fail at once — logging the viewer out mid-class. This cache
+// collapses a burst of segment requests for the same session into one
+// real check every AUTH_CACHE_TTL_MS; a revoked/expired session is still
+// caught within that same short window, just not on literally every
+// segment. Scoped to this route only — nowhere else in the app makes
+// anywhere near this many requests per video, so nowhere else needs it.
+const AUTH_CACHE_TTL_MS = 20_000;
+const authCache = new Map<string, { result: Awaited<ReturnType<typeof requireAuthorized>>; expiresAt: number }>();
+
+async function requireAuthorizedCached(request: NextRequest) {
+  // The session cookie itself IS the session identity — reading it back
+  // out doesn't require calling Supabase, so it's a free cache key.
+  const cacheKey = request.headers.get('cookie') ?? '';
+  const now = Date.now();
+  const cached = authCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.result;
+
+  const result = await requireAuthorized();
+  authCache.set(cacheKey, { result, expiresAt: now + AUTH_CACHE_TTL_MS });
+  // Opportunistic cleanup so this doesn't grow unbounded in a long-lived
+  // process — runs inline rather than on a timer since there's no
+  // background-job runner in this stack (same reasoning as the trial
+  // expiry check in lib/auth.ts).
+  if (authCache.size > 500) {
+    for (const [key, entry] of authCache) {
+      if (entry.expiresAt <= now) authCache.delete(key);
+    }
+  }
+  return result;
+}
+
 /**
  * Streams an admin-configured .m3u8 (HLS) playlist and its segments to an
  * authorized viewer, attaching the Referer header the source CDN requires
@@ -32,7 +70,7 @@ export const maxDuration = 60;
  *     rewritePlaylist() below, never constructed by the client itself.
  */
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
-  const auth = await requireAuthorized();
+  const auth = await requireAuthorizedCached(request);
   if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
 
   const parsedId = uuidSchema.safeParse(params.id);

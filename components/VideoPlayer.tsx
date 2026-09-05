@@ -734,12 +734,22 @@ export function VideoPlayer({
       // submenu worth showing — see the qualityLevels.length check where
       // the menu renders).
       hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+        // eslint-disable-next-line no-console
+        console.debug(
+          '[hls] levels reported by this playlist:',
+          data.levels.map((l) => ({ height: l.height, width: l.width, bitrate: l.bitrate }))
+        );
         const seen = new Set<string>();
         const map = new Map<string, number>();
         data.levels.forEach((level, idx) => {
-          if (!level.height) return;
-          const label = `${level.height}p`;
-          if (seen.has(label)) return; // same resolution at a different bitrate — keep the first
+          // Most CDNs (including Bunny's) tag every variant with a
+          // RESOLUTION, which hls.js exposes as height/width — but a
+          // playlist that only sets BANDWIDTH still counts as a real,
+          // switchable quality, so this falls back to a "~N kbps" label
+          // instead of silently dropping it (which is what left the
+          // Quality menu empty before this fallback existed).
+          const label = level.height ? `${level.height}p` : level.bitrate ? `${Math.round(level.bitrate / 1000)} kbps` : null;
+          if (!label || seen.has(label)) return; // same resolution at a different bitrate — keep the first
           seen.add(label);
           map.set(label, idx);
         });
