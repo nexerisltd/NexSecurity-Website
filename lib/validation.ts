@@ -89,15 +89,22 @@ export const videoSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(2000).optional().nullable(),
   thumbnail_url: safeUrl.optional().nullable(),
-  // 'bunny' (paid, protected), 'youtube' (free, unlisted), or 'mp4'
-  // (a direct, already-hosted video file URL — see
-  // app/api/video/[id]/play/route.ts for what each trade-off means).
-  provider: z.enum(['bunny', 'youtube', 'mp4']).default('bunny'),
+  // 'bunny' (paid, protected), 'youtube' (free, unlisted), 'mp4' (a
+  // direct, already-hosted video file URL), or 'm3u8' (an HLS playlist
+  // behind Referer-based hotlink protection) — see
+  // app/api/video/[id]/play/route.ts for what each trade-off means.
+  provider: z.enum(['bunny', 'youtube', 'mp4', 'm3u8']).default('bunny'),
   // Bunny: "{libraryId}/{videoGuid}" out of the embed URL
   // https://iframe.mediadelivery.net/embed/{libraryId}/{videoGuid}.
   // YouTube: just the bare 11-character video id.
   // mp4: the full https URL to the video file itself.
+  // m3u8: the full https URL to the .m3u8 playlist itself.
   source_ref: z.string().trim().min(1).max(2048),
+  // m3u8 only: the Referer value the source CDN requires before it will
+  // serve the playlist/segments. Never sent to the client — only used
+  // server-side by app/api/video/[id]/hls-proxy/route.ts, since browsers
+  // don't allow client-side JS to set a custom Referer header itself.
+  referer_header: z.string().trim().min(1).max(500).optional().nullable(),
   // Which part this is within the board, when a board has more than one
   // class attached (Part 1, Part 2, ...).
   sort_order: z.number().int().min(0).max(100000).default(0),

@@ -126,7 +126,12 @@ create table if not exists public.videos (
   provider text not null default 'bunny',
   -- "{libraryId}/{videoGuid}" from the Bunny embed URL — never exposed
   -- to the client; only used server-side to build a signed embed token.
+  -- For provider='m3u8' this holds the .m3u8 playlist URL instead.
   source_ref text not null,
+  -- provider='m3u8' only: the Referer value the source CDN requires.
+  -- Never exposed to the client — see supabase/migrations/0008 and
+  -- app/api/video/[id]/hls-proxy/route.ts.
+  referer_header text,
   -- Ordering when a board has multiple parts (Part 1, Part 2, ...).
   sort_order integer not null default 0,
   -- A single dedicated download link for this class specifically —

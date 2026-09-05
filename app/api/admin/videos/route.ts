@@ -19,7 +19,7 @@ export async function GET() {
   const { data, error } = await adminClient
     .from('videos')
     .select(
-      'id, title, description, thumbnail_url, provider, source_ref, board_id, sort_order, download_url, board:board_id(id, title), created_at, video_resources(id, title, url, sort_order)'
+      'id, title, description, thumbnail_url, provider, source_ref, referer_header, board_id, sort_order, download_url, board:board_id(id, title), created_at, video_resources(id, title, url, sort_order)'
     )
     .order('board_id', { ascending: true })
     .order('sort_order', { ascending: true });
@@ -38,7 +38,14 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const parsed = videoSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: 'Invalid input.' }, { status: 400 });
+    // Admin-only, already-authenticated route (requireAdmin() above), so
+    // surfacing which field failed and why is safe and saves guessing —
+    // matches the same reasoning as the upload route's error response.
+    console.error('videos POST validation failed:', JSON.stringify(parsed.error.flatten()));
+    return NextResponse.json(
+      { error: 'Invalid input.', details: parsed.error.flatten().fieldErrors },
+      { status: 400 }
+    );
   }
 
   const adminClient = createSupabaseAdminClient();

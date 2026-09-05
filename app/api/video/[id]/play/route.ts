@@ -57,7 +57,12 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
   }
 
-  if (video.provider !== 'bunny' && video.provider !== 'youtube' && video.provider !== 'mp4') {
+  if (
+    video.provider !== 'bunny' &&
+    video.provider !== 'youtube' &&
+    video.provider !== 'mp4' &&
+    video.provider !== 'm3u8'
+  ) {
     await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, {
       reason: 'unsupported_provider',
     });
@@ -76,6 +81,12 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     // never through an <iframe>, so the source's own page/scripts (ads,
     // redirects, etc.) never get a chance to run.
     url = video.source_ref;
+  } else if (video.provider === 'm3u8') {
+    // Never the raw source_ref (the actual CDN playlist URL) — the
+    // client only ever gets this app's own hls-proxy endpoint, which is
+    // what actually attaches the Referer header this provider exists
+    // for. See app/api/video/[id]/hls-proxy/route.ts.
+    url = `/api/video/${videoId}/hls-proxy`;
   } else {
     const [libraryId, bunnyVideoId] = video.source_ref.split('/');
     if (!libraryId || !bunnyVideoId) {

@@ -137,6 +137,12 @@ export function VideoPlayer({
   const isBunny = provider === 'bunny';
   const isYoutube = provider === 'youtube';
   const isMp4 = provider === 'mp4';
+  const isM3u8 = provider === 'm3u8';
+  // mp4 and m3u8 both play through the same plain <video> element and
+  // the same custom control bar below — they only differ in how the
+  // source gets loaded into that element (a plain `src=` vs hls.js). See
+  // the two effects that read isMp4/isM3u8 individually further down.
+  const isNativeVideo = isMp4 || isM3u8;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -188,6 +194,16 @@ export function VideoPlayer({
   // or by native <video> events (see the effect below), never both at
   // once. Only the source element and how it's driven differ.
   const mp4VideoRef = useRef<HTMLVideoElement>(null);
+
+  // --- HLS (.m3u8 with Referer) state ---
+  // Typed loosely (the real hls.js type) rather than `any` from a static
+  // import, kept dynamic below so hls.js's bytes only ever load for a
+  // class that's actually this provider.
+  const hlsRef = useRef<import('hls.js').default | null>(null);
+  // Maps a quality label ("720p") back to the hls.js level index that
+  // produced it, so changeQuality() below can call hls.currentLevel = idx
+  // without re-deriving it from the label every time.
+  const hlsLevelIndexRef = useRef<Map<string, number>>(new Map());
 
   // --- Settings menu (gear icon): Speed + Quality submenus ---
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -301,7 +317,7 @@ export function VideoPlayer({
     function flush() {
       if (isYoutube && ytPlayerRef.current) {
         reportProgress(ytCurrentTimeRef.current, ytDurationRef.current);
-      } else if (isMp4 && mp4VideoRef.current) {
+      } else if (isNativeVideo && mp4VideoRef.current) {
         reportProgress(ytCurrentTimeRef.current, ytDurationRef.current);
       } else if (isBunny && playerRef.current) {
         reportProgress(bunnyPositionRef.current, bunnyDurationRef.current);
@@ -319,7 +335,7 @@ export function VideoPlayer({
       window.removeEventListener('beforeunload', flush);
       flush();
     };
-  }, [isYoutube, isBunny, isMp4, reportProgress]);
+  }, [isYoutube, isBunny, isNativeVideo, reportProgress]);
 
   const fetchPlaybackUrl = useCallback(async (): Promise<boolean> => {
     try {
@@ -567,19 +583,22 @@ export function VideoPlayer({
   // Periodic "resume playback" checkpoint while a YouTube class is
   // actually playing — same cadence/purpose as the Bunny interval above.
   useEffect(() => {
-    if (!(isYoutube || isMp4) || !ytPlaying) return;
+    if (!(isYoutube || isNativeVideo) || !ytPlaying) return;
     const interval = setInterval(() => {
       reportProgress(ytCurrentTimeRef.current, ytDurationRef.current);
     }, PROGRESS_SAVE_MS);
     return () => clearInterval(interval);
-  }, [isYoutube, isMp4, ytPlaying, reportProgress]);
+  }, [isYoutube, isNativeVideo, ytPlaying, reportProgress]);
 
-  // --- Direct MP4: wire native <video> events into the same media state
-  // the custom control bar reads (see the comment by mp4VideoRef above).
-  // No polling needed here — timeupdate/progress/waiting/playing are all
-  // real push events, unlike the YouTube IFrame API above.
+  // --- Direct MP4 / m3u8: wire native <video> events into the same media
+  // state the custom control bar reads (see the comment by mp4VideoRef
+  // above). No polling needed here — timeupdate/progress/waiting/playing
+  // are all real push events, unlike the YouTube IFrame API above. Works
+  // identically whichever way the source got into the element — a plain
+  // `src=` (mp4) or hls.js feeding MediaSource (m3u8, see the dedicated
+  // loading effect right below this one).
   useEffect(() => {
-    if (!isMp4 || !url) return;
+    if (!isNativeVideo || !url) return;
     const v = mp4VideoRef.current;
     if (!v) return;
 
@@ -667,7 +686,91 @@ export function VideoPlayer({
       v.removeEventListener('error', onError);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMp4, url]);
+  }, [isNativeVideo, url]);
+
+  // --- HLS (.m3u8 with a custom Referer, proxied — see
+  // app/api/video/[id]/hls-proxy/route.ts for why the proxy exists):
+  // hls.js does the actual demuxing/MSE feeding wherever native HLS isn't
+  // supported (everywhere except Safari); Safari's media engine already
+  // understands .m3u8 directly, so it gets a plain `src=` like mp4 does.
+  // Either way `url` here is already this app's own hls-proxy endpoint,
+  // never the admin's original CDN URL — the browser never learns the
+  // real source or the Referer it took to reach it.
+  useEffect(() => {
+    if (!isM3u8 || !url) return;
+    const v = mp4VideoRef.current;
+    if (!v) return;
+
+    if (v.canPlayType('application/vnd.apple.mpegurl')) {
+      v.src = url;
+      return () => {
+        v.removeAttribute('src');
+        v.load();
+      };
+    }
+
+    let cancelled = false;
+    let hls: import('hls.js').default | null = null;
+    import('hls.js').then(({ default: Hls }) => {
+      if (cancelled) return;
+      if (!Hls.isSupported()) {
+        setError('This browser cannot play this video stream.');
+        return;
+      }
+      // Worker disabled deliberately: hls.js's default worker is spun up
+      // from a blob: URL, which this site's script-src CSP
+      // (next.config.js) doesn't allow — running on the main thread
+      // avoids needing to loosen that policy for one feature.
+      hls = new Hls({ enableWorker: false });
+      hls.loadSource(url);
+      hls.attachMedia(v);
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (!data.fatal) return;
+        setError('This video failed to load. The stream link may be broken or expired.');
+      });
+      // Populates the same Speed/Quality settings menu the YouTube path
+      // uses, driven by real variants this specific playlist advertises
+      // (a source with only one rendition just won't have a Quality
+      // submenu worth showing — see the qualityLevels.length check where
+      // the menu renders).
+      hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+        const seen = new Set<string>();
+        const map = new Map<string, number>();
+        data.levels.forEach((level, idx) => {
+          if (!level.height) return;
+          const label = `${level.height}p`;
+          if (seen.has(label)) return; // same resolution at a different bitrate — keep the first
+          seen.add(label);
+          map.set(label, idx);
+        });
+        hlsLevelIndexRef.current = map;
+        if (map.size > 1) {
+          setQualityLevels(['auto', ...Array.from(map.keys())]);
+        }
+        setQualityState('auto');
+      });
+      // hls.js decides the actual resolution itself in auto mode — this
+      // keeps the displayed quality honest (the real thing currently
+      // playing) instead of frozen on whatever "auto" resolved to first.
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+        const level = hls?.levels?.[data.level];
+        if (level?.height && hls?.autoLevelEnabled) {
+          setQualityState(`${level.height}p`);
+        }
+      });
+      hlsRef.current = hls;
+    });
+
+    return () => {
+      cancelled = true;
+      hls?.destroy();
+      hlsRef.current = null;
+      hlsLevelIndexRef.current = new Map();
+      setQualityLevels([]);
+      setQualityState('auto');
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isM3u8, url]);
 
   function showHint(text: string) {
     setHint(text);
@@ -682,7 +785,7 @@ export function VideoPlayer({
       const next = Math.max(0, yp.getCurrentTime() + deltaSeconds);
       yp.seekTo(next, true);
       setYtCurrentTime(next);
-    } else if (isMp4) {
+    } else if (isNativeVideo) {
       const v = mp4VideoRef.current;
       if (!v) return;
       const next = Math.max(0, v.currentTime + deltaSeconds);
@@ -747,7 +850,7 @@ export function VideoPlayer({
       }
       return;
     }
-    if (isMp4) {
+    if (isNativeVideo) {
       const v = mp4VideoRef.current;
       if (!v) return;
       // .play() returns a promise that can reject for reasons that don't
@@ -771,7 +874,7 @@ export function VideoPlayer({
 
   function setPlaybackRateNow(rate: number) {
     if (isYoutube) ytPlayerRef.current?.setPlaybackRate(rate);
-    else if (isMp4) {
+    else if (isNativeVideo) {
       if (mp4VideoRef.current) mp4VideoRef.current.playbackRate = rate;
     } else playerRef.current?.setPlaybackRate?.(rate);
   }
@@ -838,21 +941,31 @@ export function VideoPlayer({
   // NOTE: as of Google's own IFrame API docs, getPlaybackQuality,
   // setPlaybackQuality, and getAvailableQualityLevels are officially
   // "no longer supported" — setPlaybackQuality is now a documented no-op
-  // with zero effect on what the viewer sees, for every embed, not just
-  // this one. There is no client-side workaround; this isn't fixable from
-  // this file. See https://developers.google.com/youtube/iframe_api_reference
-  // ("Deprecations and changes" section). This is still called for the
-  // rare case where the embed itself reports more than one real level
-  // (see the qualityLevels.length > 1 branch below) — best-effort only.
+  // with zero effect on what the viewer sees, for every YouTube embed,
+  // not just this one. There is no client-side workaround for that half
+  // of this function; see https://developers.google.com/youtube/iframe_api_reference
+  // ("Deprecations and changes"). It's still called for the rare case
+  // where the embed itself reports more than one real level (see the
+  // qualityLevels.length > 1 branch below) — best-effort only. For m3u8,
+  // this is the real thing: hls.currentLevel actually switches the
+  // rendition immediately — no platform restriction like YouTube's,
+  // since this app controls both the player and the proxy serving it.
   function changeQuality(level: string) {
-    ytPlayerRef.current?.setPlaybackQuality(level);
+    if (isM3u8) {
+      const hls = hlsRef.current;
+      if (hls) {
+        hls.currentLevel = level === 'auto' ? -1 : (hlsLevelIndexRef.current.get(level) ?? -1);
+      }
+    } else {
+      ytPlayerRef.current?.setPlaybackQuality(level);
+    }
     setQualityState(level);
     setSettingsOpen(false);
     setSettingsPanel('main');
   }
 
   function toggleMute() {
-    if (isMp4) {
+    if (isNativeVideo) {
       const v = mp4VideoRef.current;
       if (!v) return;
       v.muted = !v.muted;
@@ -872,7 +985,7 @@ export function VideoPlayer({
 
   function changeVolume(value: number) {
     const clamped = Math.min(1, Math.max(0, value));
-    if (isMp4) {
+    if (isNativeVideo) {
       const v = mp4VideoRef.current;
       if (!v) return;
       v.volume = clamped;
@@ -900,7 +1013,7 @@ export function VideoPlayer({
   }
 
   function commitSeekBar(value: number) {
-    if (isMp4) {
+    if (isNativeVideo) {
       if (mp4VideoRef.current) mp4VideoRef.current.currentTime = value;
     } else {
       ytPlayerRef.current?.seekTo(value, true);
@@ -948,7 +1061,11 @@ export function VideoPlayer({
     }
 
     function onKeyDown(e: KeyboardEvent) {
-      const hasPlayer = isYoutube ? !!ytPlayerRef.current : isMp4 ? !!mp4VideoRef.current : !!playerRef.current;
+      const hasPlayer = isYoutube
+        ? !!ytPlayerRef.current
+        : isNativeVideo
+          ? !!mp4VideoRef.current
+          : !!playerRef.current;
       if (isTypingTarget(e.target) || !hasPlayer) return;
 
       if (e.code === 'ArrowRight') {
@@ -998,7 +1115,7 @@ export function VideoPlayer({
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isYoutube, isMp4]);
+  }, [isYoutube, isNativeVideo]);
 
   return (
     <div ref={containerRef} className="group relative aspect-video w-full overflow-hidden rounded-xl border border-vault-border bg-vault-800">
@@ -1050,7 +1167,7 @@ export function VideoPlayer({
         />
       )}
 
-      {(isYoutube || isMp4) && url && !loading && !error && !revoked && (
+      {(isYoutube || isNativeVideo) && url && !loading && !error && !revoked && (
         <>
           {/* Press-and-hold anywhere on the frame jumps to 2× (see
               handleVideoPointerDown); a normal tap/click still toggles
@@ -1069,14 +1186,19 @@ export function VideoPlayer({
               <div ref={ytMountRef} className="pointer-events-none h-full w-full" />
             </div>
           ) : (
-            // Plain <video src>, never an <iframe> — the source's own
+            // Plain <video>, never an <iframe> — the source's own
             // page/scripts (ads, redirects, etc.) never get a chance to
-            // run, since the browser is just requesting the file itself.
+            // run, since the browser is just requesting media bytes.
             // No `controls` attribute: same fully custom control bar
             // below as the YouTube path, not the browser's native one.
+            // For m3u8, `src` is left unset here — the dedicated HLS
+            // effect above attaches hls.js (or, on Safari, sets src
+            // itself) once this element exists, rather than the browser
+            // trying to load `url` (the hls-proxy playlist) as if it
+            // were a single playable file.
             <video
               ref={mp4VideoRef}
-              src={url}
+              src={isM3u8 ? undefined : url}
               playsInline
               preload="metadata"
               controlsList="nodownload"
@@ -1302,7 +1424,13 @@ export function VideoPlayer({
                         </span>
                       </button>
                       <p className="px-3.5 pb-1.5 pt-0.5 text-[10px] leading-snug text-white/35">
-                        YouTube manages quality automatically for embedded players.
+                        {isM3u8
+                          ? qualityLevels.length > 1
+                            ? 'Auto picks the best resolution for your connection — or choose one yourself.'
+                            : 'This stream only has one rendition available.'
+                          : isMp4
+                            ? 'This is a single, fixed-quality video file.'
+                            : 'YouTube manages quality automatically for embedded players.'}
                       </p>
                     </>
                   )}
@@ -1343,10 +1471,11 @@ export function VideoPlayer({
                         <span aria-hidden>‹</span> Quality
                       </button>
                       {qualityLevels.length > 1 ? (
-                        // Genuinely reported by this embed (rare, but the API
-                        // allows it) — selecting one is still just a request
-                        // YouTube is free to ignore, so this stays honest
-                        // rather than promising a guaranteed switch.
+                        // For YouTube this is a rare case the API still
+                        // allows but is free to ignore (see the NOTE above
+                        // changeQuality). For m3u8 it's a real, guaranteed
+                        // switch — hls.currentLevel actually changes what's
+                        // being decoded, since this app controls both ends.
                         qualityLevels.map((level) => (
                           <button
                             key={level}
@@ -1372,10 +1501,11 @@ export function VideoPlayer({
                             <span className="text-white/40">— currently playing</span>
                           </p>
                           <p className="mt-1.5 text-[10px] leading-snug text-white/40">
-                            YouTube&apos;s embedded player no longer accepts manual
-                            quality requests — it picks resolution itself based on
-                            connection speed and window size, and there&apos;s no
-                            way for any site embedding YouTube to override that.
+                            {isM3u8
+                              ? 'This stream only has one rendition available, so there is nothing to switch between.'
+                              : isMp4
+                                ? 'This is a single video file, uploaded at one fixed quality — there is nothing to switch between.'
+                                : "YouTube's embedded player no longer accepts manual quality requests — it picks resolution itself based on connection speed and window size, and there's no way for any site embedding YouTube to override that."}
                           </p>
                         </div>
                       )}

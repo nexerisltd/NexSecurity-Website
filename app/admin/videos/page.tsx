@@ -15,6 +15,7 @@ type Video = {
   thumbnail_url: string | null;
   provider: string;
   source_ref: string;
+  referer_header: string | null;
   board_id: string;
   board: { id: string; title: string } | null;
   video_resources: Resource[];
@@ -71,6 +72,20 @@ function parseMp4Url(input: string): string | null {
   return trimmed;
 }
 
+// m3u8: source_ref *is* the playlist URL, same shape of check as mp4
+// above — the Referer that goes with it is a separate field entirely
+// (see refererInput in both forms below), not part of source_ref.
+function parseM3u8Url(input: string): string | null {
+  const trimmed = input.trim();
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:') return null;
+  } catch {
+    return null;
+  }
+  return trimmed;
+}
+
 export default function AdminVideosPage() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [boards, setBoards] = useState<Board[]>([]);
@@ -83,8 +98,9 @@ export default function AdminVideosPage() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [thumbnailUrl, setThumbnailUrl] = useState('');
-  const [createProvider, setCreateProvider] = useState<'bunny' | 'youtube' | 'mp4'>('bunny');
+  const [createProvider, setCreateProvider] = useState<'bunny' | 'youtube' | 'mp4' | 'm3u8'>('bunny');
   const [embedInput, setEmbedInput] = useState('');
+  const [refererInput, setRefererInput] = useState('');
   const [sortOrder, setSortOrder] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState('');
 
@@ -118,19 +134,27 @@ export default function AdminVideosPage() {
         ? parseBunnyEmbedUrl(embedInput)
         : createProvider === 'youtube'
           ? parseYoutubeVideoId(embedInput)
-          : parseMp4Url(embedInput);
+          : createProvider === 'm3u8'
+            ? parseM3u8Url(embedInput)
+            : parseMp4Url(embedInput);
     if (!sourceRef) {
       setError(
         createProvider === 'bunny'
           ? "Couldn't read that as a Bunny embed URL. It should look like https://iframe.mediadelivery.net/embed/LIBRARY_ID/VIDEO_ID"
           : createProvider === 'youtube'
             ? "Couldn't read that as a YouTube link. Paste the full video URL (youtube.com/watch?v=... or youtu.be/...) or just the 11-character video id."
-            : "Couldn't read that as a direct video URL. It needs to be a full https link straight to the .mp4 file."
+            : createProvider === 'm3u8'
+              ? "Couldn't read that as an HLS playlist URL. It needs to be a full https link straight to the .m3u8 file."
+              : "Couldn't read that as a direct video URL. It needs to be a full https link straight to the .mp4 file."
       );
       return;
     }
     if (!boardId) {
       setError('Choose which board this class belongs to.');
+      return;
+    }
+    if (createProvider === 'm3u8' && !refererInput.trim()) {
+      setError('Enter the Referer this stream requires.');
       return;
     }
 
@@ -144,6 +168,7 @@ export default function AdminVideosPage() {
         thumbnail_url: thumbnailUrl || null,
         provider: createProvider,
         source_ref: sourceRef,
+        referer_header: createProvider === 'm3u8' ? refererInput.trim() : null,
         sort_order: sortOrder,
         download_url: downloadUrl || null,
       }),
@@ -158,6 +183,7 @@ export default function AdminVideosPage() {
     setDescription('');
     setThumbnailUrl('');
     setEmbedInput('');
+    setRefererInput('');
     setCreateProvider('bunny');
     setSortOrder(0);
     setDownloadUrl('');
@@ -249,6 +275,19 @@ export default function AdminVideosPage() {
                 />
                 Direct MP4 URL
               </label>
+              <label className="flex items-center gap-1.5 text-sm text-ink">
+                <input
+                  type="radio"
+                  name="create-provider"
+                  checked={createProvider === 'm3u8'}
+                  onChange={() => {
+                    setCreateProvider('m3u8');
+                    setEmbedInput('');
+                    setRefererInput('');
+                  }}
+                />
+                m3u8 with Referer
+              </label>
             </div>
           </Field>
         </div>
@@ -259,7 +298,9 @@ export default function AdminVideosPage() {
                 ? 'Bunny embed URL'
                 : createProvider === 'youtube'
                   ? 'YouTube video URL'
-                  : 'Direct video URL (.mp4)'
+                  : createProvider === 'm3u8'
+                    ? 'HLS playlist URL (.m3u8)'
+                    : 'Direct video URL (.mp4)'
             }
           >
             <input
@@ -271,12 +312,31 @@ export default function AdminVideosPage() {
                   ? 'https://iframe.mediadelivery.net/embed/503487/df2a65b4-…'
                   : createProvider === 'youtube'
                     ? 'https://www.youtube.com/watch?v=… (make sure it is Unlisted, not Public)'
-                    : 'https://example.com/path/video.mp4'
+                    : createProvider === 'm3u8'
+                      ? 'https://example.com/path/playlist.m3u8'
+                      : 'https://example.com/path/video.mp4'
               }
               className="input font-mono text-xs"
             />
           </Field>
         </div>
+        {createProvider === 'm3u8' && (
+          <div className="sm:col-span-2">
+            <Field label="Referer header">
+              <input
+                required
+                value={refererInput}
+                onChange={(e) => setRefererInput(e.target.value)}
+                placeholder="https://example.com/"
+                className="input font-mono text-xs"
+              />
+              <p className="mt-1 text-xs text-ink-faint">
+                Sent server-side only, when fetching the playlist and its segments — never exposed
+                to the viewer's browser.
+              </p>
+            </Field>
+          </div>
+        )}
         <div className="sm:col-span-2">
           <Field label="Thumbnail">
             <ThumbnailUpload value={thumbnailUrl} onChange={setThumbnailUrl} />
@@ -340,10 +400,18 @@ export default function AdminVideosPage() {
                           ? 'text-warn'
                           : v.provider === 'mp4'
                             ? 'text-signal-glow'
-                            : 'text-ok'
+                            : v.provider === 'm3u8'
+                              ? 'text-signal-glow'
+                              : 'text-ok'
                       }
                     >
-                      {v.provider === 'youtube' ? 'YouTube' : v.provider === 'mp4' ? 'Direct MP4' : 'Bunny'}
+                      {v.provider === 'youtube'
+                        ? 'YouTube'
+                        : v.provider === 'mp4'
+                          ? 'Direct MP4'
+                          : v.provider === 'm3u8'
+                            ? 'm3u8 with Referer'
+                            : 'Bunny'}
                     </span>
                   </p>
                 </div>
@@ -394,15 +462,24 @@ function VideoEditPanel({
   const currentBoard = useMemo(() => boards.find((b) => b.id === boardId), [boards, boardId]);
   const [description, setDescription] = useState(video.description ?? '');
   const [thumbnailUrl, setThumbnailUrl] = useState(video.thumbnail_url ?? '');
-  const [editProvider, setEditProvider] = useState<'bunny' | 'youtube' | 'mp4'>(
-    video.provider === 'youtube' ? 'youtube' : video.provider === 'mp4' ? 'mp4' : 'bunny'
+  const [editProvider, setEditProvider] = useState<'bunny' | 'youtube' | 'mp4' | 'm3u8'>(
+    video.provider === 'youtube'
+      ? 'youtube'
+      : video.provider === 'mp4'
+        ? 'mp4'
+        : video.provider === 'm3u8'
+          ? 'm3u8'
+          : 'bunny'
   );
   const [embedInput, setEmbedInput] = useState(
     video.provider === 'youtube'
       ? youtubeWatchUrlFromSourceRef(video.source_ref)
-      : video.provider === 'mp4'
+      : video.provider === 'mp4' || video.provider === 'm3u8'
         ? video.source_ref
         : bunnyEmbedUrlFromSourceRef(video.source_ref)
+  );
+  const [refererInput, setRefererInput] = useState(
+    video.provider === 'm3u8' ? (video.referer_header ?? '') : ''
   );
   const [sortOrder, setSortOrder] = useState(video.sort_order ?? 0);
   const [downloadUrl, setDownloadUrl] = useState(video.download_url ?? '');
@@ -420,7 +497,9 @@ function VideoEditPanel({
         ? parseBunnyEmbedUrl(embedInput)
         : editProvider === 'youtube'
           ? parseYoutubeVideoId(embedInput)
-          : parseMp4Url(embedInput);
+          : editProvider === 'm3u8'
+            ? parseM3u8Url(embedInput)
+            : parseMp4Url(embedInput);
 
     // Switching provider (or re-pasting the URL) requires a URL that
     // actually parses — otherwise this would silently keep the OLD
@@ -432,8 +511,14 @@ function VideoEditPanel({
           ? "Couldn't read that as a Bunny embed URL. Paste the full embed URL to switch providers."
           : editProvider === 'youtube'
             ? "Couldn't read that as a YouTube link. Paste the video URL or id to switch providers."
-            : "Couldn't read that as a direct video URL. Paste a full https .mp4 link to switch providers."
+            : editProvider === 'm3u8'
+              ? "Couldn't read that as an HLS playlist URL. Paste a full https .m3u8 link to switch providers."
+              : "Couldn't read that as a direct video URL. Paste a full https .mp4 link to switch providers."
       );
+      return;
+    }
+    if (editProvider === 'm3u8' && !refererInput.trim()) {
+      onError('Enter the Referer this stream requires.');
       return;
     }
 
@@ -446,6 +531,7 @@ function VideoEditPanel({
       sort_order: sortOrder,
       download_url: downloadUrl || null,
       provider: editProvider,
+      referer_header: editProvider === 'm3u8' ? refererInput.trim() : null,
     };
     if (sourceRef) patch.source_ref = sourceRef;
 
@@ -566,6 +652,19 @@ function VideoEditPanel({
                 />
                 Direct MP4 URL
               </label>
+              <label className="flex items-center gap-1.5 text-sm text-ink">
+                <input
+                  type="radio"
+                  name={`edit-provider-${video.id}`}
+                  checked={editProvider === 'm3u8'}
+                  onChange={() => {
+                    setEditProvider('m3u8');
+                    setEmbedInput(video.provider === 'm3u8' ? video.source_ref : '');
+                    setRefererInput(video.provider === 'm3u8' ? (video.referer_header ?? '') : '');
+                  }}
+                />
+                m3u8 with Referer
+              </label>
             </div>
           </Field>
         </div>
@@ -575,7 +674,9 @@ function VideoEditPanel({
               ? 'Bunny embed URL'
               : editProvider === 'youtube'
                 ? 'YouTube video URL'
-                : 'Direct video URL (.mp4)'
+                : editProvider === 'm3u8'
+                  ? 'HLS playlist URL (.m3u8)'
+                  : 'Direct video URL (.mp4)'
           }
         >
           <input
@@ -584,6 +685,16 @@ function VideoEditPanel({
             className="input font-mono text-xs"
           />
         </Field>
+        {editProvider === 'm3u8' && (
+          <Field label="Referer header">
+            <input
+              value={refererInput}
+              onChange={(e) => setRefererInput(e.target.value)}
+              placeholder="https://example.com/"
+              className="input font-mono text-xs"
+            />
+          </Field>
+        )}
         <Field label="Part number (order within this board)">
           <input
             type="number"
