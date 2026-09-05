@@ -84,6 +84,26 @@ export function ancestorTitles<T extends TreeBoard>(boards: T[], boardId: string
   return titles;
 }
 
+/**
+ * Ids of every ancestor of `boardId`, root-first, NOT including the
+ * board itself — same walk as ancestorTitles above, but returns ids
+ * instead of titles. Used to reconstruct which option was picked at
+ * each level of a cascading (top-level → sub-board → ...) selector from
+ * just the final board id a video/record actually stores.
+ */
+export function ancestorIds<T extends TreeBoard>(boards: T[], boardId: string): string[] {
+  const byId = new Map(boards.map((b) => [b.id, b]));
+  const ids: string[] = [];
+  let current = byId.get(boardId);
+  const seen = new Set<string>();
+  while (current?.parent_id && byId.has(current.parent_id) && !seen.has(current.parent_id)) {
+    seen.add(current.parent_id);
+    ids.unshift(current.parent_id);
+    current = byId.get(current.parent_id);
+  }
+  return ids;
+}
+
 /** Every id that has at least one child — used to decide which rows get
  * an expand/collapse toggle. */
 export function idsWithChildren<T extends TreeBoard>(boards: T[]): Set<string> {

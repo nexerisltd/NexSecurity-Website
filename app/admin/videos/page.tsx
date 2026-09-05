@@ -1,10 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ThumbnailUpload } from '@/components/ThumbnailUpload';
 import { Modal } from '@/components/Modal';
-import { orderBoardsHierarchically } from '@/lib/boardTree';
+import { buildBoardTree, idsWithChildren, ancestorIds, ancestorTitles, type BoardNode } from '@/lib/boardTree';
 
 type Board = { id: string; title: string; parent_id: string | null; visibility?: 'universal' | 'restricted' };
 type Resource = { id: string; title: string; url: string; sort_order: number };
@@ -86,6 +86,95 @@ function parseM3u8Url(input: string): string | null {
   return trimmed;
 }
 
+// Single source of truth for how a provider renders as a badge — was
+// three duplicated ternary chains (create list, grouped list, board
+// path hints all needed it); now just one, reused everywhere.
+function providerBadge(provider: string): { label: string; className: string } {
+  switch (provider) {
+    case 'youtube':
+      return { label: 'YouTube', className: 'text-warn' };
+    case 'mp4':
+      return { label: 'Direct MP4', className: 'text-signal-glow' };
+    case 'm3u8':
+      return { label: 'm3u8 with Referer', className: 'text-signal-glow' };
+    default:
+      return { label: 'Bunny', className: 'text-ok' };
+  }
+}
+
+/**
+ * Board picker as a drill-down chain — one <select> per depth level
+ * (top-level board, then its sub-boards, then *its* sub-boards, and so
+ * on for however deep this particular branch actually goes) instead of
+ * one flat list of every board in the whole tree with no indication of
+ * which top-level board a deeply-nested one sits under. Whichever id is
+ * currently selected anywhere in the chain becomes `value` immediately
+ * (even if it still has children of its own) — picking a board that
+ * turns out to have sub-boards just reveals the next level's select
+ * rather than requiring a separate confirm step.
+ */
+function CascadingBoardSelect({
+  boards,
+  value,
+  onChange,
+}: {
+  boards: Board[];
+  value: string;
+  onChange: (boardId: string) => void;
+}) {
+  const byParent = useMemo(() => {
+    const map = new Map<string | null, Board[]>();
+    for (const b of boards) {
+      if (!map.has(b.parent_id)) map.set(b.parent_id, []);
+      map.get(b.parent_id)!.push(b);
+    }
+    for (const list of map.values()) list.sort((a, b) => a.title.localeCompare(b.title));
+    return map;
+  }, [boards]);
+
+  // The full root-to-selected path, reconstructed from the tree itself
+  // (not from local UI state) — so it stays correct no matter which
+  // level's <select> just fired the change.
+  const chain = useMemo(() => (value ? [...ancestorIds(boards, value), value] : []), [boards, value]);
+
+  const levels: { parentId: string | null; options: Board[]; selectedId: string }[] = [];
+  let parentId: string | null = null;
+  for (let depth = 0; ; depth++) {
+    const options = byParent.get(parentId) ?? [];
+    if (options.length === 0) break;
+    const selectedId = chain[depth] ?? '';
+    levels.push({ parentId, options, selectedId });
+    if (!selectedId) break; // nothing chosen at this level yet — stop, no deeper level to show
+    parentId = selectedId;
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {levels.map((level, depth) => (
+        <select
+          key={level.parentId ?? 'root'}
+          value={level.selectedId}
+          onChange={(e) => onChange(e.target.value)}
+          className="input"
+          required={depth === 0}
+        >
+          <option value="">{depth === 0 ? '— Select a top-level board —' : '— Select a sub-board —'}</option>
+          {level.options.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.title}
+            </option>
+          ))}
+        </select>
+      ))}
+      {value && (
+        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+          {[...ancestorTitles(boards, value), boards.find((b) => b.id === value)?.title].filter(Boolean).join(' › ')}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function AdminVideosPage() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [boards, setBoards] = useState<Board[]>([]);
@@ -107,6 +196,180 @@ export default function AdminVideosPage() {
   // Which video's edit modal is open
   const [editingId, setEditingId] = useState<string | null>(null);
   const editingVideo = useMemo(() => videos.find((v) => v.id === editingId) ?? null, [videos, editingId]);
+
+  // Board-grouped list below: which board sections are collapsed, and the
+  // title search that temporarily overrides collapse state so a match
+  // buried three boards deep is never hidden by whatever was collapsed
+  // before the search started.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
+  const didDefaultCollapse = useRef(false);
+
+  const tree = useMemo(() => buildBoardTree(boards), [boards]);
+  const parentIds = useMemo(() => idsWithChildren(boards), [boards]);
+  const videosByBoard = useMemo(() => {
+    const map = new Map<string, Video[]>();
+    for (const v of videos) {
+      if (!map.has(v.board_id)) map.set(v.board_id, []);
+      map.get(v.board_id)!.push(v);
+    }
+    for (const list of map.values()) list.sort((a, b) => a.sort_order - b.sort_order);
+    return map;
+  }, [videos]);
+  // Every board id that actually needs a collapse toggle — either it has
+  // sub-boards, or it has classes of its own directly attached to it.
+  const collapsibleIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const b of boards) {
+      if (parentIds.has(b.id) || (videosByBoard.get(b.id)?.length ?? 0) > 0) ids.add(b.id);
+    }
+    return ids;
+  }, [boards, parentIds, videosByBoard]);
+  const boardIds = useMemo(() => new Set(boards.map((b) => b.id)), [boards]);
+  // Classes whose board was since deleted — shouldn't happen, but if it
+  // does, they'd otherwise vanish from this page with no way to find or
+  // fix them.
+  const orphanVideos = useMemo(
+    () => videos.filter((v) => !boardIds.has(v.board_id)),
+    [videos, boardIds]
+  );
+
+  // Collapse every board with something to hide the first time boards
+  // actually load — an admin returning to a page with 40 classes across
+  // a dozen boards wants the lay of the land first, not everything
+  // expanded at once. A ref (not state) so this fires exactly once and
+  // doesn't fight with the admin's own later expand/collapse clicks.
+  useEffect(() => {
+    if (!didDefaultCollapse.current && collapsibleIds.size > 0) {
+      setCollapsedIds(new Set(collapsibleIds));
+      didDefaultCollapse.current = true;
+    }
+  }, [collapsibleIds]);
+
+  function toggleCollapsed(id: string) {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const trimmedQuery = searchQuery.trim().toLowerCase();
+  // null = no search active, so every board renders and collapse state
+  // is respected as normal; a Set = only these video ids should show,
+  // and every ancestor of a match forces itself open regardless of
+  // collapsedIds.
+  const matchingVideoIds = useMemo(() => {
+    if (!trimmedQuery) return null;
+    return new Set(videos.filter((v) => v.title.toLowerCase().includes(trimmedQuery)).map((v) => v.id));
+  }, [videos, trimmedQuery]);
+
+  function nodeHasMatch(node: BoardNode<Board>): boolean {
+    if (!matchingVideoIds) return true;
+    if ((videosByBoard.get(node.id) ?? []).some((v) => matchingVideoIds.has(v.id))) return true;
+    return node.children.some((child) => nodeHasMatch(child));
+  }
+
+  function renderVideoRow(v: Video) {
+    const badge = providerBadge(v.provider);
+    return (
+      <div
+        key={v.id}
+        className="overflow-hidden rounded-xl border border-vault-border bg-vault-900/60 backdrop-blur-xl"
+      >
+        <div className="flex items-center justify-between gap-3 px-4 py-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm text-ink">
+              <span className="mr-2 font-mono text-[10px] text-signal-glow">#{v.sort_order}</span>
+              {v.title}
+            </p>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+              {v.video_resources?.length ?? 0} resource{v.video_resources?.length === 1 ? '' : 's'} ·{' '}
+              <span className={badge.className}>{badge.label}</span>
+            </p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <button
+              onClick={() => setEditingId(v.id)}
+              className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+            >
+              Edit
+            </button>
+            <button
+              disabled={busyId === v.id}
+              onClick={() => removeVideo(v.id)}
+              className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function renderBoardNode(node: BoardNode<Board>) {
+    if (!nodeHasMatch(node)) return null;
+    const hasChildren = node.children.length > 0;
+    const nodeVideos = (videosByBoard.get(node.id) ?? []).filter(
+      (v) => !matchingVideoIds || matchingVideoIds.has(v.id)
+    );
+    const isSearching = !!matchingVideoIds;
+    const isCollapsed = !isSearching && collapsedIds.has(node.id);
+    const showToggle = hasChildren || nodeVideos.length > 0;
+
+    return (
+      <div
+        key={node.id}
+        className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass"
+      >
+        <div className="flex items-center justify-between gap-3 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            {showToggle ? (
+              <button
+                onClick={() => toggleCollapsed(node.id)}
+                aria-label={isCollapsed ? 'Expand' : 'Collapse'}
+                className="shrink-0 rounded p-0.5 text-ink-faint transition hover:text-ink"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  className={`transition-transform ${isCollapsed ? '-rotate-90' : ''}`}
+                >
+                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            ) : (
+              <span className="w-3.5 shrink-0" aria-hidden="true" />
+            )}
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-ink">{node.title}</p>
+              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+                {nodeVideos.length} class{nodeVideos.length === 1 ? '' : 'es'}
+                {hasChildren
+                  ? ` · ${node.children.length} sub-board${node.children.length === 1 ? '' : 's'}`
+                  : ''}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Sub-boards render NESTED INSIDE their parent's card, same as
+            the Boards admin page — an actual folder-tree shape, so which
+            board a class sits under is legible at a glance instead of
+            needing to open every class's edit modal to find out. */}
+        {!isCollapsed && (nodeVideos.length > 0 || hasChildren) && (
+          <div className="space-y-2 border-t border-vault-border bg-black/20 p-2 pl-5">
+            {nodeVideos.map((v) => renderVideoRow(v))}
+            {node.children.map((child) => renderBoardNode(child))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   async function load() {
     setLoading(true);
@@ -205,25 +468,22 @@ export default function AdminVideosPage() {
       <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">Admin</p>
       <h1 className="mt-2 font-display text-2xl font-semibold text-ink">Classes</h1>
       <p className="mt-2 max-w-2xl text-sm text-ink-dim">
-        Attach a class (video) to a leaf board. After adding one, click{' '}
-        <strong className="text-ink">Edit</strong> on it below to update details or attach a
-        Lecture Sheet, Exam Sheet, or Practice Sheet.
+        Attach a class (video) to a board — pick the top-level board first, then drill down to
+        the exact one it belongs under. The list below is grouped the same way: collapse a board
+        to hide everything under it, or search by title if you already know the class. After
+        adding one, click <strong className="text-ink">Edit</strong> on it below to update
+        details or attach a Lecture Sheet, Exam Sheet, or Practice Sheet.
       </p>
 
       <form
         onSubmit={createVideo}
         className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-vault-border bg-vault-900 p-5 sm:grid-cols-2 backdrop-blur-xl shadow-glass"
       >
-        <Field label="Board">
-          <select value={boardId} onChange={(e) => setBoardId(e.target.value)} className="input" required>
-            <option value="">— Select a board —</option>
-            {boards.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.title}
-              </option>
-            ))}
-          </select>
-        </Field>
+        <div className="sm:col-span-2">
+          <Field label="Board">
+            <CascadingBoardSelect boards={boards} value={boardId} onChange={setBoardId} />
+          </Field>
+        </div>
         <Field label="Title">
           <input required value={title} onChange={(e) => setTitle(e.target.value)} className="input" />
         </Field>
@@ -381,58 +641,57 @@ export default function AdminVideosPage() {
             No classes yet.
           </p>
         ) : (
-          videos.map((v) => (
-            <div key={v.id} className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass">
-              <div className="flex items-center justify-between px-4 py-3">
-                <div>
-                  <p className="text-sm text-ink">
-                    <span className="mr-2 font-mono text-[10px] text-signal-glow">
-                      #{v.sort_order}
-                    </span>
-                    {v.title}
-                  </p>
-                  <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
-                    {v.board?.title ?? '—'} · {v.video_resources?.length ?? 0} resource
-                    {v.video_resources?.length === 1 ? '' : 's'} ·{' '}
-                    <span
-                      className={
-                        v.provider === 'youtube'
-                          ? 'text-warn'
-                          : v.provider === 'mp4'
-                            ? 'text-signal-glow'
-                            : v.provider === 'm3u8'
-                              ? 'text-signal-glow'
-                              : 'text-ok'
-                      }
-                    >
-                      {v.provider === 'youtube'
-                        ? 'YouTube'
-                        : v.provider === 'mp4'
-                          ? 'Direct MP4'
-                          : v.provider === 'm3u8'
-                            ? 'm3u8 with Referer'
-                            : 'Bunny'}
-                    </span>
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setEditingId(v.id)}
-                    className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    disabled={busyId === v.id}
-                    onClick={() => removeVideo(v.id)}
-                    className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
-                  >
-                    Remove
-                  </button>
-                </div>
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search classes by title…"
+                className="input max-w-xs"
+              />
+              <div className="ml-auto flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCollapsedIds(new Set())}
+                  className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+                >
+                  Expand all
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCollapsedIds(new Set(collapsibleIds))}
+                  className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+                >
+                  Collapse all
+                </button>
               </div>
             </div>
-          ))
+
+            {matchingVideoIds && matchingVideoIds.size === 0 ? (
+              <p className="rounded-xl border border-dashed border-vault-border p-6 text-center text-sm text-ink-faint">
+                No classes match &quot;{searchQuery}&quot;.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {tree.map((node) => renderBoardNode(node))}
+                {(() => {
+                  const visibleOrphans = orphanVideos.filter(
+                    (v) => !matchingVideoIds || matchingVideoIds.has(v.id)
+                  );
+                  return (
+                    visibleOrphans.length > 0 && (
+                      <div className="overflow-hidden rounded-xl border border-dashed border-warn/40 bg-vault-900 p-2 pl-4">
+                        <p className="px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-warn">
+                          Not attached to any existing board
+                        </p>
+                        <div className="space-y-2">{visibleOrphans.map((v) => renderVideoRow(v))}</div>
+                      </div>
+                    )
+                  );
+                })()}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -458,7 +717,6 @@ function VideoEditPanel({
 }) {
   const [title, setTitle] = useState(video.title);
   const [boardId, setBoardId] = useState(video.board_id);
-  const orderedBoards = useMemo(() => orderBoardsHierarchically(boards), [boards]);
   const currentBoard = useMemo(() => boards.find((b) => b.id === boardId), [boards, boardId]);
   const [description, setDescription] = useState(video.description ?? '');
   const [thumbnailUrl, setThumbnailUrl] = useState(video.thumbnail_url ?? '');
@@ -586,16 +844,9 @@ function VideoEditPanel({
         <Field label="Title">
           <input value={title} onChange={(e) => setTitle(e.target.value)} className="input" required />
         </Field>
-        <Field label="Board (this class belongs to)">
-          <select value={boardId} onChange={(e) => setBoardId(e.target.value)} className="input" required>
-            {orderedBoards.map((b) => (
-              <option key={b.id} value={b.id}>
-                {'—'.repeat(b.depth)}
-                {b.depth > 0 ? ' ' : ''}
-                {b.title}
-              </option>
-            ))}
-          </select>
+        <div className="sm:col-span-2">
+          <Field label="Board (this class belongs to)">
+            <CascadingBoardSelect boards={boards} value={boardId} onChange={setBoardId} />
           {/* Classes don't have their own access list — who can watch this
               one follows whichever board it's attached to. Restricted per
               board, not per class, so this is a status readout + a link
@@ -612,7 +863,8 @@ function VideoEditPanel({
               'Universal — visible to every authorized user, via this board.'
             )}
           </p>
-        </Field>
+          </Field>
+        </div>
         <div className="sm:col-span-2">
           <Field label="Video source">
             <div className="flex gap-4">
