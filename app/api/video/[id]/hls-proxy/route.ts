@@ -33,6 +33,19 @@ export const maxDuration = 60;
 // anywhere near this many requests per video, so nowhere else needs it.
 const AUTH_CACHE_TTL_MS = 20_000;
 const authCache = new Map<string, { result: Awaited<ReturnType<typeof requireAuthorized>>; expiresAt: number }>();
+// Separate from authCache above: this holds the in-flight PROMISE for a
+// cache key that's currently being checked for the first time, so a burst
+// of concurrent requests (e.g. hls.js firing several variant/segment
+// fetches at once right after a quality switch) all await the SAME
+// Supabase call instead of each starting their own. Without this, every
+// request in that burst sees a cache miss (nothing's been stored yet —
+// the cache is only populated AFTER a check resolves) and independently
+// calls requireAuthorized(), and enough of those at once trips Supabase
+// Auth's own rate limit (`over_request_rate_limit`, 429) — which then
+// reads as "session invalid" for everyone and force-logs the viewer out
+// mid-class. Deleted from this map the instant its result lands in
+// authCache above, so it never grows and never outlives its own request.
+const inFlightAuthChecks = new Map<string, Promise<Awaited<ReturnType<typeof requireAuthorized>>>>();
 
 async function requireAuthorizedCached(request: NextRequest) {
   // The session cookie itself IS the session identity — reading it back
@@ -42,8 +55,16 @@ async function requireAuthorizedCached(request: NextRequest) {
   const cached = authCache.get(cacheKey);
   if (cached && cached.expiresAt > now) return cached.result;
 
-  const result = await requireAuthorized();
-  authCache.set(cacheKey, { result, expiresAt: now + AUTH_CACHE_TTL_MS });
+  const existingCheck = inFlightAuthChecks.get(cacheKey);
+  if (existingCheck) return existingCheck;
+
+  const checkPromise = requireAuthorized().then((result) => {
+    authCache.set(cacheKey, { result, expiresAt: Date.now() + AUTH_CACHE_TTL_MS });
+    inFlightAuthChecks.delete(cacheKey);
+    return result;
+  });
+  inFlightAuthChecks.set(cacheKey, checkPromise);
+
   // Opportunistic cleanup so this doesn't grow unbounded in a long-lived
   // process — runs inline rather than on a timer since there's no
   // background-job runner in this stack (same reasoning as the trial
@@ -53,7 +74,7 @@ async function requireAuthorizedCached(request: NextRequest) {
       if (entry.expiresAt <= now) authCache.delete(key);
     }
   }
-  return result;
+  return checkPromise;
 }
 
 /**

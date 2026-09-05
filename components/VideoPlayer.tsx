@@ -701,19 +701,31 @@ export function VideoPlayer({
     const v = mp4VideoRef.current;
     if (!v) return;
 
-    if (v.canPlayType('application/vnd.apple.mpegurl')) {
-      v.src = url;
-      return () => {
-        v.removeAttribute('src');
-        v.load();
-      };
-    }
-
+    // NOTE: this used to branch on v.canPlayType('application/vnd.apple.mpegurl')
+    // first and hand playback straight to the native <video> element whenever
+    // that returned truthy — which is correct for Safari (no MSE-based HLS
+    // engine at all) but ALSO fires "maybe"/"probably" on some Windows
+    // Chrome/Edge installs that have an OS-level HEVC/media-extension
+    // component registered. Those installs *can* play the stream natively,
+    // but native playback exposes zero JS hooks for level count or level
+    // switching — so hls.js (and therefore MANIFEST_PARSED, and therefore
+    // the whole qualityLevels/Quality-menu state) never even loads, and the
+    // Quality submenu permanently shows "only one rendition available"
+    // regardless of how many renditions the playlist actually has. hls.js
+    // itself is always MSE-based and gives real level data everywhere it's
+    // supported, so it's now tried first unconditionally; native src is only
+    // the fallback for the genuine "no MSE HLS support" case (real Safari).
     let cancelled = false;
     let hls: import('hls.js').default | null = null;
+    let usedNativeSrc = false;
     import('hls.js').then(({ default: Hls }) => {
       if (cancelled) return;
       if (!Hls.isSupported()) {
+        if (v.canPlayType('application/vnd.apple.mpegurl')) {
+          v.src = url;
+          usedNativeSrc = true;
+          return;
+        }
         setError('This browser cannot play this video stream.');
         return;
       }
@@ -775,6 +787,10 @@ export function VideoPlayer({
       cancelled = true;
       hls?.destroy();
       hlsRef.current = null;
+      if (usedNativeSrc) {
+        v.removeAttribute('src');
+        v.load();
+      }
       hlsLevelIndexRef.current = new Map();
       setQualityLevels([]);
       setQualityState('auto');
