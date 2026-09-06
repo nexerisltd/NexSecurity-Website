@@ -69,7 +69,21 @@ const nextConfig = {
   // hostname here (not a hardcoded project ref) means image optimization
   // works out of the box for any Supabase project, in any environment,
   // without editing this file again later.
+  //
+  // unoptimized: true — Vercel's on-demand Image Optimization
+  // (/_next/image) is a METERED service with a monthly quota of unique
+  // source images; once exceeded it returns 402 for anything it hasn't
+  // already cached, which is exactly what silently broke every newly
+  // uploaded thumbnail while older ones (already cached) kept working.
+  // components/ThumbnailUpload.tsx now resizes/re-encodes images in the
+  // browser before they're ever uploaded, so there's nothing left for a
+  // paid optimization step to usefully do — turning this off removes
+  // the dependency on that quota entirely, permanently, for free.
+  // remotePatterns/formats below are harmless to leave configured (ready
+  // to go if optimization is ever turned back on) but have no effect
+  // while unoptimized is true.
   images: {
+    unoptimized: true,
     remotePatterns: [{ protocol: 'https', hostname: '**.supabase.co' }],
     formats: ['image/avif', 'image/webp'],
   },

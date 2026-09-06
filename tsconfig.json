@@ -18,5 +18,11 @@
     "paths": { "@/*": ["./*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  // scripts/ holds one-off maintenance scripts run directly via `tsx`,
+  // never imported by the app itself — excluding it here keeps its
+  // dependencies (e.g. sharp, only needed by
+  // scripts/recompress-thumbnails.ts) OUT of what `next build`
+  // type-checks, so a script-only package that was never added to
+  // package.json can't break a production build.
+  "exclude": ["node_modules", "scripts"]
 }

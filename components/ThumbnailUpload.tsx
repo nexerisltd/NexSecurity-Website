@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { compressImageFile } from '@/lib/imageCompress';
 
 export function ThumbnailUpload({
   value,
@@ -19,8 +20,12 @@ export function ThumbnailUpload({
     setUploading(true);
     setError(null);
     try {
+      // Shrink/re-encode BEFORE it ever leaves the browser — see
+      // lib/imageCompress.ts for why this replaced relying on Vercel's
+      // (metered, quota-limited) on-the-fly image optimization.
+      const toUpload = await compressImageFile(file);
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', toUpload);
       const res = await fetch('/api/admin/upload', { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Upload failed.');
