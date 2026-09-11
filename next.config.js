@@ -32,13 +32,23 @@
 // dead in `next dev` while working fine in a production build).
 // Production keeps the strict policy with no 'unsafe-eval'.
 const isDev = process.env.NODE_ENV === 'development';
+// The 'm3u8' provider's playlist/segment requests go straight from the
+// BROWSER to the Cloudflare Worker (stream.<domain>, see worker/src/
+// index.ts) now, via hls.js's own XHR loader — not through this app's
+// server at all anymore. XHR/fetch is governed by connect-src (NOT
+// media-src, which only covers <video>/<audio> src= loads), so without
+// explicitly allowing that origin here, every manifest/segment request
+// hls.js makes is silently CSP-blocked in the browser console with no
+// visible error in the player itself beyond "failed to load". Only the
+// bare origin is needed (no path) since connect-src matches by origin.
+const streamWorkerOrigin = process.env.NEXT_PUBLIC_STREAM_WORKER_BASE || '';
 const ContentSecurityPolicy = `
   default-src 'self';
   script-src 'self' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com${isDev ? " 'unsafe-eval'" : ''};
   style-src 'self' 'unsafe-inline';
   img-src 'self' data: blob: https:;
   font-src 'self' data:;
-  connect-src 'self' https://*.supabase.co wss://*.supabase.co${isDev ? ' ws://localhost:*' : ''};
+  connect-src 'self' https://*.supabase.co wss://*.supabase.co${streamWorkerOrigin ? ` ${streamWorkerOrigin}` : ''}${isDev ? ' ws://localhost:*' : ''};
   media-src 'self' https: blob:;
   frame-src 'self' https://iframe.mediadelivery.net https://www.youtube-nocookie.com;
   frame-ancestors 'none';

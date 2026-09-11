@@ -82,11 +82,16 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     // redirects, etc.) never get a chance to run.
     url = video.source_ref;
   } else if (video.provider === 'm3u8') {
-    // Never the raw source_ref (the actual CDN playlist URL) — the
-    // client only ever gets this app's own hls-proxy endpoint, which is
-    // what actually attaches the Referer header this provider exists
-    // for. See app/api/video/[id]/hls-proxy/route.ts.
-    url = `/api/video/${videoId}/hls-proxy`;
+    // No usable url for this provider anymore — VideoPlayer.tsx never
+    // reads it for 'm3u8'. The actual playable URL now points at the
+    // Cloudflare Worker (stream.<domain>, see worker/src/index.ts) and
+    // is only ever built client-side, from a short-lived token minted
+    // by app/api/video/[id]/stream-token/route.ts — never from this
+    // route, so the raw source_ref/Referer never pass through here at
+    // all. This branch still exists (rather than falling into the
+    // `else`/bunny branch below) purely so provider/resumeSeconds keep
+    // getting returned correctly for this provider.
+    url = '';
   } else {
     const [libraryId, bunnyVideoId] = video.source_ref.split('/');
     if (!libraryId || !bunnyVideoId) {

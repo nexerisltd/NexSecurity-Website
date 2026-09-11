@@ -106,9 +106,12 @@ export const videoSchema = z.object({
   // m3u8: the full https URL to the .m3u8 playlist itself.
   source_ref: z.string().trim().min(1).max(2048),
   // m3u8 only: the Referer value the source CDN requires before it will
-  // serve the playlist/segments. Never sent to the client — only used
-  // server-side by app/api/video/[id]/hls-proxy/route.ts, since browsers
-  // don't allow client-side JS to set a custom Referer header itself.
+  // serve the playlist/segments. Never sent to the client in readable
+  // form — browsers don't allow client-side JS to set a custom Referer
+  // header itself, so it's read server-side by
+  // app/api/video/[id]/stream-token/route.ts and AES-256-GCM encrypted
+  // (see lib/streamToken.ts) into a short-lived token the Cloudflare
+  // Worker (worker/src/index.ts) decrypts to actually attach it.
   referer_header: z.string().trim().min(1).max(500).optional().nullable(),
   // Which part this is within the board, when a board has more than one
   // class attached (Part 1, Part 2, ...).

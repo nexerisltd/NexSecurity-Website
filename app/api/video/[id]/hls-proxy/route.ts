@@ -78,6 +78,17 @@ async function requireAuthorizedCached(request: NextRequest) {
 }
 
 /**
+ * NO LONGER WIRED UP as of the Cloudflare Worker offload — kept in
+ * place (not deleted) as the reference this logic was ported FROM, but
+ * nothing in this app links to it anymore: app/api/video/[id]/play/
+ * route.ts no longer returns this route's URL for 'm3u8', and
+ * VideoPlayer.tsx gets its playback URL from the Worker
+ * (worker/src/index.ts) via app/api/video/[id]/stream-token/route.ts
+ * instead. Its actual byte-streaming workload — the reason it existed —
+ * now runs at Cloudflare's edge instead of on Vercel. Safe to delete in
+ * a later cleanup pass once the migration's been confirmed stable in
+ * production; left untouched here on purpose.
+ *
  * Streams an admin-configured .m3u8 (HLS) playlist and its segments to an
  * authorized viewer, attaching the Referer header the source CDN requires
  * — a header browsers block client-side JS from setting itself (see

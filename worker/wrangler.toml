@@ -1,0 +1,25 @@
+name = "nexsecurity-stream-worker"
+main = "src/index.ts"
+compatibility_date = "2024-09-25"
+
+# Custom domain লাগছে না — Cloudflare নিজেই একটা ফ্রি
+# xxxxx.workers.dev subdomain দেয়, সেটাই ব্যবহার করা হচ্ছে।
+workers_dev = true
+
+# Sliding-window rate limiting (see src/rateLimit.ts) needs somewhere to
+# keep counters across requests/instances — KV is the Workers-native
+# equivalent of the in-memory Map lib/rateLimit.ts uses on Vercel.
+# Create with:
+#   npx wrangler kv namespace create STREAM_RATE_LIMIT
+# then paste the returned id below.
+kv_namespaces = [
+  { binding = "STREAM_RATE_LIMIT", id = "bbb2dc95c8fa411f8d9985e9e3d575e9" }
+]
+
+# STREAM_TOKEN_SECRET is deliberately NOT set here — wrangler.toml is
+# committed to the repo, and this value must stay a secret. Set it with:
+#   npx wrangler secret put STREAM_TOKEN_SECRET
+# using the EXACT SAME value as the Next.js app's STREAM_TOKEN_SECRET
+# env var (Vercel -> Project -> Settings -> Environment Variables) —
+# both sides derive the same AES-256-GCM key from this one string (see
+# src/streamToken.ts and ../lib/streamToken.ts).

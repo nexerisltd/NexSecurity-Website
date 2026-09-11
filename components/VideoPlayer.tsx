@@ -104,6 +104,15 @@ const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const SEEK_SECONDS = 10;
 const HOLD_THRESHOLD_MS = 320;
 const HEARTBEAT_MS = 4 * 60 * 1000; // well inside the ~10-minute token expiry
+// How often to fetch a fresh Worker stream token for 'm3u8' playback
+// (see /api/video/[id]/stream-token/route.ts and its TOKEN_TTL_SECONDS,
+// currently 75s) — comfortably under that TTL so a valid token is
+// always in streamTokenRef by the time hls.js's xhrSetup needs one,
+// even on a slow connection. Unrelated to HEARTBEAT_MS above: that one
+// only re-verifies auth without touching an already-playing stream;
+// this one is what actually keeps m3u8 playback alive past the token's
+// short lifetime for a multi-hour class.
+const STREAM_TOKEN_REFRESH_MS = 45 * 1000;
 const YT_TIME_POLL_MS = 400; // YT's API has no timeupdate event, only polling
 const PROGRESS_SAVE_MS = 15 * 1000; // "resume playback" checkpoint cadence — YouTube only now (see effect below); Bunny/mp4/HLS already save themselves on pause/end/unload.
 
@@ -359,6 +368,13 @@ export function VideoPlayer({
   // import, kept dynamic below so hls.js's bytes only ever load for a
   // class that's actually this provider.
   const hlsRef = useRef<import('hls.js').default | null>(null);
+  // Holds the most recently fetched Worker stream token for the 'm3u8'
+  // provider (see /api/video/[id]/stream-token/route.ts). Read by
+  // hls.js's xhrSetup (below) on every outgoing manifest/segment
+  // request, and kept fresh by the refresh effect further down — a ref,
+  // not state, since updating it must never re-trigger the main HLS
+  // effect or re-attach/reload the player mid-playback.
+  const streamTokenRef = useRef<string | null>(null);
   // Maps a quality label ("720p") back to the hls.js level index that
   // produced it, so changeQuality() below can call hls.currentLevel = idx
   // without re-deriving it from the label every time.
@@ -508,6 +524,33 @@ export function VideoPlayer({
     }
   }, [videoId]);
 
+  // Mints (or refreshes) the short-lived Worker stream token for 'm3u8'
+  // playback (see /api/video/[id]/stream-token/route.ts) — this route
+  // re-runs the same authorization checks hls-proxy used to make on
+  // every segment, so a null return here means the same real things a
+  // failed heartbeat means (revoked device, disabled account, board
+  // access pulled), not just "network blip".
+  const fetchStreamToken = useCallback(async (): Promise<string | null> => {
+    try {
+      const res = await fetch(`/api/video/${videoId}/stream-token`, { method: 'POST' });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return typeof data.token === 'string' ? data.token : null;
+    } catch {
+      return null;
+    }
+  }, [videoId]);
+
+  // Builds the client-facing playback URL against the Cloudflare Worker
+  // (see worker/src/index.ts) instead of this app's own (now-removed)
+  // hls-proxy route — NEXT_PUBLIC_STREAM_WORKER_BASE is public on
+  // purpose (see worker/README.md) since the browser constructs this
+  // URL directly.
+  const buildStreamWorkerUrl = useCallback((id: string, token: string): string => {
+    const base = (process.env.NEXT_PUBLIC_STREAM_WORKER_BASE ?? '').replace(/\/+$/, '');
+    return `${base}/hls/${id}?t=${encodeURIComponent(token)}`;
+  }, []);
+
   // Initial load — skipped when the server already rendered the URL
   // (initialUrl prop, from app/learn/video/[id]/page.tsx): that's the same
   // authorization check, already done server-side, so re-fetching it
@@ -524,11 +567,25 @@ export function VideoPlayer({
         const res = await fetch(`/api/video/${videoId}/play`, { method: 'POST' });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? 'Playback unavailable.');
-        if (!cancelled) {
+        if (cancelled) return;
+        if (data.provider === 'm3u8') {
+          // /play still runs the real authorization gate (board
+          // published, canAccessBoard, etc.) but no longer hands back a
+          // directly playable URL for this provider — that now comes
+          // from stream-token, which re-runs the same checks itself
+          // right before minting a token (see that route). Two checks
+          // in a row on first load is a deliberate, cheap trade for
+          // never putting a stale/unauthorized Worker URL into `url`.
+          const token = await fetchStreamToken();
+          if (cancelled) return;
+          if (!token) throw new Error('Playback unavailable.');
+          streamTokenRef.current = token;
+          setUrl(buildStreamWorkerUrl(videoId, token));
+        } else {
           setUrl(data.url);
-          setProvider(data.provider ?? null);
-          if (typeof data.resumeSeconds === 'number') setResumeSeconds(data.resumeSeconds);
         }
+        setProvider(data.provider ?? null);
+        if (typeof data.resumeSeconds === 'number') setResumeSeconds(data.resumeSeconds);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Playback unavailable.');
       } finally {
@@ -560,6 +617,35 @@ export function VideoPlayer({
       }
     }, HEARTBEAT_MS);
   }, [url, fetchPlaybackUrl]);
+
+  // 'm3u8'-only: keeps streamTokenRef stocked with a token that hasn't
+  // expired, well before /api/video/[id]/stream-token/route.ts's own
+  // TOKEN_TTL_SECONDS runs out. This never touches `url` state or
+  // reloads hls.js's source — hls.js's xhrSetup (in the HLS effect
+  // below) is what actually applies whatever's currently in the ref to
+  // each outgoing request, so a multi-hour class keeps playing on one
+  // continuously-refreshed token stream instead of ever needing the
+  // player itself to reload. A failed refresh means the SAME real things
+  // a failed heartbeat above means (device revoked, account disabled,
+  // board access pulled) — stream-token re-runs that exact
+  // authorization check on every call — so it's treated the same way:
+  // stop playback rather than let it keep running on a token that's
+  // about to stop working anyway.
+  useEffect(() => {
+    if (provider !== 'm3u8' || !url) return;
+    return jitteredInterval(async () => {
+      const token = await fetchStreamToken();
+      if (token) {
+        streamTokenRef.current = token;
+        return;
+      }
+      setRevoked(true);
+      setUrl(null);
+      streamTokenRef.current = null;
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+    }, STREAM_TOKEN_REFRESH_MS);
+  }, [provider, url, fetchStreamToken]);
 
   // Wire up player.js once both the library and the iframe exist. Bunny
   // only — YouTube gets its own IFrame Player API setup below instead.
@@ -887,11 +973,13 @@ export function VideoPlayer({
   }, [isNativeVideo, url]);
 
   // --- HLS playback — two different providers land here:
-  //   - 'm3u8' (with a custom Referer, proxied — see
-  //     app/api/video/[id]/hls-proxy/route.ts for why the proxy exists):
-  //     `url` is already this app's own hls-proxy endpoint, never the
-  //     admin's original CDN URL — the browser never learns the real
-  //     source or the Referer it took to reach it.
+  //   - 'm3u8' (with a custom Referer, proxied — see worker/src/index.ts
+  //     and app/api/video/[id]/stream-token/route.ts for why the proxy
+  //     exists and where it now runs): `url` points at the Cloudflare
+  //     Worker's own domain, never the admin's original CDN URL — the
+  //     browser never learns the real source or the Referer it took to
+  //     reach it, same guarantee the old same-origin hls-proxy route
+  //     made, just served off Vercel now.
   //   - 'mp4' ("Direct Stream URL") when the admin pasted a .m3u8 link
   //     directly rather than an actual video file — some CDNs serve
   //     perfectly public HLS with no Referer needed at all, so `url`
@@ -935,7 +1023,38 @@ export function VideoPlayer({
       // from a blob: URL, which this site's script-src CSP
       // (next.config.js) doesn't allow — running on the main thread
       // avoids needing to loosen that policy for one feature.
-      hls = new Hls({ enableWorker: false });
+      hls = new Hls({
+        enableWorker: false,
+        ...(isM3u8
+          ? {
+              // Every manifest/segment/key request for this provider
+              // now goes to the Cloudflare Worker (stream.<domain>, see
+              // worker/src/index.ts), which authorizes purely off the
+              // `t=` query param — no cookies involved at all. The
+              // Worker bakes whatever token was current AT REWRITE TIME
+              // into every rewritten playlist URL, which would go stale
+              // partway through a class given that token's short
+              // (~75s) TTL. Overwriting `t=` here with whatever the
+              // refresh effect above last put in streamTokenRef keeps
+              // every outgoing request valid for as long as playback
+              // continues, without ever reloading hls.js's source or
+              // interrupting playback to do it.
+              xhrSetup: (xhr: XMLHttpRequest, requestUrl: string) => {
+                const token = streamTokenRef.current;
+                if (!token) return;
+                try {
+                  const rewritten = new URL(requestUrl);
+                  rewritten.searchParams.set('t', token);
+                  xhr.open('GET', rewritten.toString(), true);
+                } catch {
+                  // Malformed URL should never happen here (it's always
+                  // this app's own Worker URL) — fail open rather than
+                  // throwing out of hls.js's internals over it.
+                }
+              },
+            }
+          : {}),
+      });
       hls.loadSource(url);
       hls.attachMedia(v);
       // hls.js marks plenty of genuinely transient hiccups "fatal" too —
@@ -1033,6 +1152,7 @@ export function VideoPlayer({
       cancelled = true;
       hls?.destroy();
       hlsRef.current = null;
+      streamTokenRef.current = null;
       if (usedNativeSrc) {
         v.removeAttribute('src');
         v.load();
