@@ -31,6 +31,11 @@ export function getPushStatus(): PushStatus {
   return Notification.permission as PushStatus;
 }
 
+// TEMPORARY — remove this once the mobile subscribe issue is confirmed
+// fixed. Surfaces the exact failure reason as an on-screen alert so it
+// can be read on a phone with no DevTools/USB-debugging access at all.
+const DEBUG_ALERT = true;
+
 /**
  * Requests permission (if not already decided) and subscribes this
  * browser to push, POSTing the subscription to /api/push/subscribe.
@@ -38,15 +43,22 @@ export function getPushStatus(): PushStatus {
  * punish sites that call Notification.requestPermission() without one.
  */
 export async function subscribeToPush(): Promise<{ ok: boolean; status: PushStatus }> {
-  if (!isPushSupported()) return { ok: false, status: 'unsupported' };
+  if (!isPushSupported()) {
+    if (DEBUG_ALERT) alert('[push debug] not supported: Notification/serviceWorker/PushManager missing from this browser.');
+    return { ok: false, status: 'unsupported' };
+  }
 
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') {
+    if (DEBUG_ALERT) alert(`[push debug] permission not granted: "${permission}"`);
     return { ok: false, status: permission as PushStatus };
   }
 
   const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-  if (!publicKey) return { ok: false, status: 'granted' };
+  if (!publicKey) {
+    if (DEBUG_ALERT) alert('[push debug] NEXT_PUBLIC_VAPID_PUBLIC_KEY is missing from this build.');
+    return { ok: false, status: 'granted' };
+  }
 
   try {
     const registration = await navigator.serviceWorker.ready;
@@ -59,16 +71,31 @@ export async function subscribeToPush(): Promise<{ ok: boolean; status: PushStat
       // allocates a normal ArrayBuffer at runtime, so this is safe.
       applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
     });
-    await fetch('/api/push/subscribe', {
+
+    const res = await fetch('/api/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(subscription.toJSON()),
     });
+
+    // fetch() only throws on a network-level failure — a 400/401/500
+    // response still resolves normally, so without this check a
+    // rejected subscribe would be silently reported as a success.
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      if (DEBUG_ALERT) alert(`[push debug] /api/push/subscribe failed: ${res.status} ${res.statusText}\n${text}`);
+      throw new Error(`subscribe POST failed: ${res.status}`);
+    }
+
+    if (DEBUG_ALERT) alert('[push debug] subscribed successfully — endpoint saved.');
     return { ok: true, status: 'granted' };
-  } catch {
+  } catch (err) {
     // Permission was granted but the actual subscribe (or the POST)
     // failed — still "granted" from the browser's point of view, just
-    // not usefully subscribed. Best-effort either way.
+    // not usefully subscribed.
+    if (DEBUG_ALERT && err instanceof Error && !err.message.startsWith('subscribe POST failed')) {
+      alert(`[push debug] pushManager.subscribe() threw: ${err.message}`);
+    }
     return { ok: false, status: 'granted' };
   }
 }
