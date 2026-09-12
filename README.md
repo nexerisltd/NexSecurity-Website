@@ -425,3 +425,8 @@ in the `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` /
 `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` repo secrets) is documented
 in `android/README.md`, including why it has to be done once,
 interactively, via GitHub Codespaces rather than fully from CI.
+
+## Repo-Frok-Sync
+1. NexErisLTD/NS-Main
+2. NexSecurityOG/NS-Main
+3. mrarxme/NS-Main
