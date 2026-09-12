@@ -1,26 +1,23 @@
 /**
- * KV-based approximation of ../../lib/rateLimit.ts's in-memory sliding
- * window — a fixed-window counter rather than a true sliding window,
- * since KV has no atomic increment and is only eventually consistent.
- * Can slightly under- or over-count for the same key under heavy
- * concurrent traffic; a reasonable approximation, not exact parity —
- * same real-world caveat lib/rateLimit.ts's own comment already makes
- * about its in-memory Map on Vercel's multi-instance serverless
- * runtime.
+ * In-memory, per-isolate rate limiter — deliberately NOT Workers KV.
+ * ... (আগে যেটা দিয়েছিলাম সেই পুরো ফাইল)
  */
 
-export async function checkRateLimit(
-  kv: KVNamespace,
-  key: string,
-  limit: number,
-  windowSeconds: number
-): Promise<boolean> {
-  const bucketKey = `rl:${key}:${Math.floor(Date.now() / 1000 / windowSeconds)}`;
-  const current = await kv.get(bucketKey);
-  const count = current ? parseInt(current, 10) : 0;
-  if (count >= limit) return false;
-  // expirationTtl a little past the window so a bucket never outlives
-  // its own usefulness by more than a few seconds.
-  await kv.put(bucketKey, String(count + 1), { expirationTtl: windowSeconds + 5 });
+type Bucket = { count: number; resetAt: number };
+const buckets = new Map<string, Bucket>();
+
+export function checkRateLimit(key: string, limit: number, windowSeconds: number): boolean {
+  const now = Date.now();
+  const windowMs = windowSeconds * 1000;
+  const existing = buckets.get(key);
+
+  if (!existing || existing.resetAt < now) {
+    buckets.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+
+  if (existing.count >= limit) return false;
+
+  existing.count += 1;
   return true;
 }
