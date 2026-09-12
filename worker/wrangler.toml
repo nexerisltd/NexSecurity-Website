@@ -6,15 +6,15 @@ compatibility_date = "2024-09-25"
 # xxxxx.workers.dev subdomain দেয়, সেটাই ব্যবহার করা হচ্ছে।
 workers_dev = true
 
-# Sliding-window rate limiting (see src/rateLimit.ts) needs somewhere to
-# keep counters across requests/instances — KV is the Workers-native
-# equivalent of the in-memory Map lib/rateLimit.ts uses on Vercel.
-# Create with:
-#   npx wrangler kv namespace create STREAM_RATE_LIMIT
-# then paste the returned id below.
-kv_namespaces = [
-  { binding = "STREAM_RATE_LIMIT", id = "bbb2dc95c8fa411f8d9985e9e3d575e9" }
-]
+# No kv_namespaces here on purpose anymore — rate limiting
+# (src/rateLimit.ts) is an in-memory, per-isolate Map now, not Workers
+# KV. The old KV version did a read+write on every single request
+# (including cache hits) and burned through Cloudflare's free-tier daily
+# KV write limit (1,000/day, account-wide) within hours of real class
+# traffic — that's the "KV operations nearing daily cap" email. The
+# STREAM_RATE_LIMIT namespace (id bbb2dc95c8fa411f8d9985e9e3d575e9) is
+# safe to delete from the Cloudflare dashboard (Workers & Pages -> KV) —
+# nothing references it anymore.
 
 # STREAM_TOKEN_SECRET is deliberately NOT set here — wrangler.toml is
 # committed to the repo, and this value must stay a secret. Set it with:

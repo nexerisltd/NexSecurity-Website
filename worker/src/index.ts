@@ -10,7 +10,6 @@ import { checkRateLimit } from './rateLimit';
 
 export interface Env {
   STREAM_TOKEN_SECRET: string;
-  STREAM_RATE_LIMIT: KVNamespace;
 }
 
 // Matches hls-proxy's old 240/60s (see
@@ -125,7 +124,7 @@ export default {
     // actually being requested.
     if (payload.vid !== videoId) return jsonError('Access denied.', 403);
 
-    const allowed = await checkRateLimit(env.STREAM_RATE_LIMIT, payload.uid, RATE_LIMIT, RATE_LIMIT_WINDOW_SECONDS);
+    const allowed = checkRateLimit(payload.uid, RATE_LIMIT, RATE_LIMIT_WINDOW_SECONDS);
     if (!allowed) return jsonError('Too many requests.', 429);
 
     // Range requests (seeking, or a player resuming mid-segment) get
