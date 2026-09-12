@@ -599,7 +599,28 @@ export function TopNav({
                       wondering why. */}
                   <div className="border-t border-vault-border px-3.5 py-2.5">
                     {pushStatus === 'granted' && (
-                      <p className="text-[11px] text-ink-faint">Push notifications are on for this device.</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[11px] text-ink-faint">Push notifications are on for this device.</p>
+                        {/* Permission being "granted" only reflects the
+                            browser/OS-level decision — it does NOT
+                            guarantee the subscribe() + /api/push/subscribe
+                            round-trip ever actually succeeded (see
+                            lib/webPushClient.ts). Android home-screen
+                            installed PWAs (WebAPKs) in particular tie
+                            this permission to the OS app settings, not
+                            chrome://settings/content/notifications, so
+                            there was previously no way to retry a
+                            silently-failed subscribe short of digging
+                            into Android system settings. This re-runs
+                            the same subscribe flow unconditionally. */}
+                        <button
+                          onClick={enablePush}
+                          disabled={enablingPush}
+                          className="shrink-0 text-[11px] font-medium text-signal hover:underline disabled:opacity-60"
+                        >
+                          {enablingPush ? 'Syncing…' : 'Resync'}
+                        </button>
+                      </div>
                     )}
                     {pushStatus === 'default' && (
                       <button
