@@ -40,9 +40,11 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-#worker
+# wrangler (Cloudflare Worker local dev)
 node_modules/
 worker/node_modules/
 .next/
 .env
 .env.local
+worker/.wrangler/
+worker/.dev.vars

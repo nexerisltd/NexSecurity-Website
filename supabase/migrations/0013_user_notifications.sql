@@ -12,6 +12,22 @@
 -- being one row per (user, device) rather than a shared row with a
 -- join table; simpler to query "my unread notifications" as a single
 -- indexed lookup with no join.
+-- public.is_admin() is only ever defined in supabase/schema.sql (for a
+-- FRESH install) — it was never shipped as its own migration, so any
+-- project that's only ever run migrations (not the full schema.sql)
+-- doesn't have it yet. Defining it here too (idempotent — same as
+-- schema.sql's own "create or replace") makes this migration
+-- self-contained instead of silently depending on a function that
+-- might not exist yet.
+create or replace function public.is_admin() returns boolean as $$
+  select exists (
+    select 1 from public.authorized_users au
+    where lower(au.email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+      and au.status = 'ACTIVE'
+      and au.role = 'ADMIN'
+  );
+$$ language sql stable security definer set search_path = public;
+
 create table if not exists public.user_notifications (
   id uuid primary key default gen_random_uuid(),
   user_email text not null,

@@ -24,7 +24,7 @@ type PendingRequest = {
 };
 type UserNotification = {
   id: string;
-  type: 'class' | 'ebook' | 'routine';
+  type: 'class' | 'ebook' | 'routine' | 'device_request';
   title: string;
   body: string;
   url: string;

@@ -1025,6 +1025,36 @@ export function VideoPlayer({
       // avoids needing to loosen that policy for one feature.
       hls = new Hls({
         enableWorker: false,
+        // Defaults (30s/no cap) are tuned for a generic player, not a
+        // lecture video a student may leave running for an hour+ on a
+        // patchy mobile connection. A bigger forward buffer absorbs
+        // brief network dips without ever visibly stalling; capping the
+        // level to the actual <video> element's rendered size (mainly a
+        // phone) stops hls.js's ABR from wasting a slow connection's
+        // bandwidth on a 1080p stream nobody's pixel grid can show,
+        // which is exactly the "keeps buffering on phone" symptom.
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
+        capLevelToPlayerSize: true,
+        // hls.js's default is to keep the ENTIRE played-back buffer in
+        // memory for the whole session (no cap) — fine on a desktop,
+        // costly on a budget Android phone over an hour-long lecture,
+        // where that growing memory pressure is a real, separate cause
+        // of stutter/dropped frames that has nothing to do with network
+        // speed at all. 30s of back-buffer is more than enough for a
+        // student to rewind a few seconds; anything further back gets
+        // evicted instead of accumulating forever.
+        backBufferLength: 30,
+        // hls.js assumes a conservative 500kbps starting point until it
+        // has measured a real segment download, so a genuinely fast
+        // connection still starts on a low-quality level for the first
+        // few seconds before ramping up — visible as "starts blurry,
+        // then sharpens". Most of this app's traffic is broadband/decent
+        // 4G, not the low end hls.js defaults for, so a higher starting
+        // guess trades a rare slow-connection stumble for a much more
+        // common fast-connection one starting at the right quality
+        // immediately instead of visibly stepping up to it.
+        abrEwmaDefaultEstimate: 1_500_000,
         ...(isM3u8
           ? {
               // Every manifest/segment/key request for this provider
@@ -1340,14 +1370,22 @@ export function VideoPlayer({
   // where the embed itself reports more than one real level (see the
   // qualityLevels.length > 1 branch below) — best-effort only. For HLS
   // (m3u8 provider or a direct .m3u8 URL under mp4 — see isHls above),
-  // this is the real thing: hls.currentLevel actually switches the
-  // rendition immediately — no platform restriction like YouTube's,
-  // since this app controls the player end-to-end either way.
+  // this is the real thing: hls.nextLevel actually switches the
+  // rendition — no platform restriction like YouTube's, since this app
+  // controls the player end-to-end either way. Deliberately
+  // hls.nextLevel, not hls.currentLevel: currentLevel forces an
+  // IMMEDIATE switch that flushes whatever's already buffered at the
+  // old quality, which is exactly what shows up as a stall/re-buffer
+  // stutter the instant someone taps a quality option. nextLevel takes
+  // effect on the next fragment onward instead — playback keeps running
+  // uninterrupted on what's already buffered while the new quality
+  // loads in behind it, which is what an actually smooth switch feels
+  // like.
   function changeQuality(level: string) {
     if (isHls) {
       const hls = hlsRef.current;
       if (hls) {
-        hls.currentLevel = level === 'auto' ? -1 : (hlsLevelIndexRef.current.get(level) ?? -1);
+        hls.nextLevel = level === 'auto' ? -1 : (hlsLevelIndexRef.current.get(level) ?? -1);
       }
     } else {
       ytPlayerRef.current?.setPlaybackQuality(level);

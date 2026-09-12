@@ -2,6 +2,7 @@ import 'server-only';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getClientIp, getDeviceLabel, getDeviceId } from '@/lib/requestInfo';
+import { notifyNewDeviceRequest } from '@/lib/webPush';
 
 export type AuthorizedUser = {
   id: string;
@@ -138,6 +139,19 @@ async function upsertDeviceAndGetStatus(
         .from('authorized_users')
         .update({ trial_started_at: startedAt.toISOString(), trial_expires_at: expiresAt.toISOString() })
         .eq('id', userId);
+    }
+
+    // Only reachable once per genuinely NEW pending device — the
+    // `existing` branch above returns early on every subsequent visit
+    // from the same still-pending device, so this never re-fires just
+    // because the person refreshed the "waiting for approval" page a
+    // few times. Fire-and-forget, same reasoning as notifyNewClass in
+    // app/api/admin/videos/route.ts: a slow/failed push fan-out should
+    // never delay or break the login flow that triggered it.
+    if (initialStatus === 'pending') {
+      void notifyNewDeviceRequest(userId, user.email, deviceLabel).catch((err) => {
+        console.error('[push] new-device-request notification failed', err);
+      });
     }
 
     return initialStatus;

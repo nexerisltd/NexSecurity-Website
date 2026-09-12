@@ -81,7 +81,7 @@ export async function sendPushToEmails(
  */
 export async function notifyUsers(
   emails: string[],
-  payload: { type: 'class' | 'ebook' | 'routine'; title: string; body: string; url: string }
+  payload: { type: 'class' | 'ebook' | 'routine' | 'device_request'; title: string; body: string; url: string }
 ): Promise<void> {
   if (emails.length === 0) return;
 
@@ -131,7 +131,41 @@ async function getBoardRecipients(boardId: string, excludeEmail: string): Promis
   return { boardTitle: board.title, recipients };
 }
 
-/** Notifies everyone who can see a board that a new class just went up on it. */
+/**
+ * Notifies every ACTIVE admin that a device needs approval — the ONE
+ * notification type here that isn't board-scoped (see
+ * getBoardRecipients above); every admin should hear about this
+ * regardless of which boards they happen to have access to, since
+ * approving/rejecting devices isn't gated by board access at all.
+ * Includes the device owner themselves if they happen to be an admin —
+ * unlike the other notify* functions there's no "person who caused
+ * this" to exclude here, the device owner didn't create this event on
+ * anyone else's behalf.
+ */
+export async function notifyNewDeviceRequest(userId: string, userEmail: string, deviceLabel: string): Promise<void> {
+  const adminClient = createSupabaseAdminClient();
+  const { data: admins } = await adminClient
+    .from('authorized_users')
+    .select('email')
+    .eq('role', 'ADMIN')
+    .eq('status', 'ACTIVE');
+
+  if (!admins || admins.length === 0) return;
+
+  await notifyUsers(
+    admins.map((a) => a.email),
+    {
+      type: 'device_request',
+      title: 'New device sign-in request',
+      body: `${userEmail} · ${deviceLabel}`,
+      // The per-user devices page — same place TopNav's "Device
+      // sign-in requests" section already links to, so clicking this
+      // notification lands exactly where an admin would go to
+      // approve/reject it.
+      url: `/admin/users/${userId}`,
+    }
+  );
+}
 export async function notifyNewClass(boardId: string, videoTitle: string, videoId: string, createdByEmail: string): Promise<void> {
   const result = await getBoardRecipients(boardId, createdByEmail);
   if (!result || result.recipients.length === 0) return;

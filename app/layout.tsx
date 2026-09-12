@@ -30,8 +30,21 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // Warms the TLS/TCP connection to the stream Worker (see worker/src/
+  // index.ts) before any video is even opened, so the very first
+  // playlist/segment request on a lecture page doesn't also have to pay
+  // for a fresh handshake to a brand-new origin — that one-time cost is
+  // small on WiFi but noticeable on mobile data, which is exactly where
+  // "slow to start" was being felt most.
+  const streamWorkerBase = process.env.NEXT_PUBLIC_STREAM_WORKER_BASE;
   return (
     <html lang="en" className={`${manrope.variable} ${mono.variable}`}>
+      {streamWorkerBase ? (
+        <head>
+          <link rel="preconnect" href={streamWorkerBase} crossOrigin="anonymous" />
+          <link rel="dns-prefetch" href={streamWorkerBase} />
+        </head>
+      ) : null}
       <body className="min-h-screen bg-vault-950 font-body text-ink antialiased">
         <RegisterServiceWorker />
         <SitePopup />
