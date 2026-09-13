@@ -86,6 +86,18 @@ const ITEMS = [
       </g>
     ),
   },
+  {
+    href: '/admin/security',
+    label: 'Security',
+    icon: (
+      <path
+        d="M12 3 4.5 6.5v5c0 5 3.4 8.5 7.5 9.5 4.1-1 7.5-4.5 7.5-9.5v-5L12 3Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+    ),
+  },
 ];
 
 export function AdminSidebar() {

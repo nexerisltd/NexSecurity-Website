@@ -169,6 +169,7 @@ type UserRow = {
   role: 'USER' | 'ADMIN';
   status: 'ACTIVE' | 'DISABLED';
   restrict_devices: boolean;
+  notify_on_device_request: boolean;
 };
 
 export default function UserDevicesPage() {
@@ -211,6 +212,18 @@ export default function UserDevicesPage() {
     if (userId) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
+
+  async function updateUser(patch: Partial<Pick<UserRow, 'restrict_devices' | 'notify_on_device_request'>>) {
+    setError(null);
+    const res = await fetch(`/api/admin/users/${userId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    const data = await res.json();
+    if (!res.ok) setError(data.error ?? 'Could not update user.');
+    load();
+  }
 
   async function decide(rowId: string, status: 'authorized' | 'restricted' | 'blocked') {
     setBusy(rowId);
@@ -279,6 +292,36 @@ export default function UserDevicesPage() {
           </p>
         )}
       </div>
+
+      {/* Same restrict_devices/notify_on_device_request columns the
+          Users list page's row-level buttons already toggle (see
+          app/admin/users/page.tsx) — available here too, right next to
+          the actual device list they affect, instead of only from the
+          list one level up. Admin accounts are never gated by
+          restrict_devices regardless of this toggle's value (see
+          isRestricted in lib/auth.ts) — the button still shows so an
+          admin CAN flip it (e.g. for record-keeping, or in case a
+          future change ever makes it matter), it just has no visible
+          effect on an admin account's own sign-in. */}
+      {!loading && user && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            onClick={() => updateUser({ restrict_devices: !user.restrict_devices })}
+            className="rounded-lg border border-vault-border px-3 py-1.5 text-xs text-ink-dim transition hover:border-signal hover:text-signal"
+          >
+            {user.restrict_devices ? 'Remove device restriction' : 'Require device approval'}
+          </button>
+          <button
+            onClick={() => updateUser({ notify_on_device_request: !user.notify_on_device_request })}
+            className="rounded-lg border border-vault-border px-3 py-1.5 text-xs text-ink-dim transition hover:border-signal hover:text-signal"
+            title="Whether a new device sign-in request for THIS account pages every admin. On by default; off by default for admin accounts, since an admin's own extra device needs no approval and previously just notified everyone else for nothing."
+          >
+            {user.notify_on_device_request
+              ? 'New-device alerts: On (click to turn off)'
+              : 'New-device alerts: Off (click to turn on)'}
+          </button>
+        </div>
+      )}
 
       {error && <p className="mt-3 text-xs text-danger">{error}</p>}
 

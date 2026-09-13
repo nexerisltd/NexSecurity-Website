@@ -29,6 +29,7 @@ export const updateAuthorizedUserSchema = z.object({
   role: roleSchema.optional(),
   status: statusSchema.optional(),
   restrict_devices: z.boolean().optional(),
+  notify_on_device_request: z.boolean().optional(),
 });
 
 // 'pending' is set by the system when a device is first seen — never a
@@ -218,4 +219,22 @@ export const pushSubscriptionSchema = z.object({
     p256dh: z.string().min(1),
     auth: z.string().min(1),
   }),
+});
+
+// What components/DevToolsGuard.tsx reports to app/api/security/incident/
+// route.ts the moment its heuristic fires. Every field is best-effort
+// browser info, not identity — the actual identity (user, device_id) is
+// taken from the authenticated session server-side, never from this
+// body, so a manipulated request body can't misattribute an incident to
+// a different account or device.
+export const securityIncidentSchema = z.object({
+  detectionType: z.enum(['DEVTOOLS_DETECTED', 'SUSPICIOUS_SECURITY_EVENT']).default('DEVTOOLS_DETECTED'),
+  screen_width: z.number().int().min(0).max(20000).optional(),
+  screen_height: z.number().int().min(0).max(20000).optional(),
+  viewport_width: z.number().int().min(0).max(20000).optional(),
+  viewport_height: z.number().int().min(0).max(20000).optional(),
+});
+
+export const reviewStatusUpdateSchema = z.object({
+  review_status: z.enum(['pending', 'reviewed', 'false_positive', 'confirmed_abuse', 'action_taken']),
 });

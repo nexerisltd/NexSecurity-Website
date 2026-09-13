@@ -166,6 +166,46 @@ export async function notifyNewDeviceRequest(userId: string, userEmail: string, 
     }
   );
 }
+
+/**
+ * Notifies every ACTIVE admin that components/DevToolsGuard.tsx fired
+ * for some student — same "every admin, unconditionally" reasoning as
+ * notifyNewDeviceRequest above (a security incident isn't board-scoped
+ * either), and the same push+in-app-inbox delivery via notifyUsers().
+ * Uses the 'device_request' notification type rather than adding a new
+ * one — see supabase/migrations/0014_user_notifications_device_request_type.sql's
+ * check constraint, which would need its own migration to extend; this
+ * event fits the same "something needs an admin's attention" shape
+ * closely enough not to justify that for now. Called from
+ * app/api/security/incident/route.ts right after the incident itself is
+ * recorded in audit_logs — never blocks or fails that recording if the
+ * push send itself fails.
+ */
+export async function notifySecurityIncident(
+  userEmail: string,
+  deviceLabel: string,
+  detectionType: string,
+  incidentId: number
+): Promise<void> {
+  const adminClient = createSupabaseAdminClient();
+  const { data: admins } = await adminClient
+    .from('authorized_users')
+    .select('email')
+    .eq('role', 'ADMIN')
+    .eq('status', 'ACTIVE');
+
+  if (!admins || admins.length === 0) return;
+
+  await notifyUsers(
+    admins.map((a) => a.email),
+    {
+      type: 'device_request',
+      title: 'Security incident detected',
+      body: `${userEmail} · ${deviceLabel} · ${detectionType.replace(/_/g, ' ')}`,
+      url: `/admin/security?highlight=${incidentId}`,
+    }
+  );
+}
 export async function notifyNewClass(boardId: string, videoTitle: string, videoId: string, createdByEmail: string): Promise<void> {
   const result = await getBoardRecipients(boardId, createdByEmail);
   if (!result || result.recipients.length === 0) return;

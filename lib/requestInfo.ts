@@ -107,3 +107,14 @@ export function parseDeviceLabel(ua: string, platformHint?: string | null, model
 
   return `${osWithModel} · ${browser}`;
 }
+
+/**
+ * Splits getDeviceLabel()'s combined "OS · Browser" string back into its
+ * two parts, for UI that wants them in separate table rows (see
+ * app/api/security/incident/route.ts) instead of re-deriving OS/browser
+ * with a second copy of the parsing logic above.
+ */
+export function splitDeviceLabel(label: string): { os: string; browser: string } {
+  const [os, browser] = label.split(' · ');
+  return { os: os ?? 'Unknown OS', browser: browser ?? 'Unknown browser' };
+}

@@ -10,6 +10,7 @@ export type AuthorizedUser = {
   role: 'USER' | 'ADMIN';
   status: 'ACTIVE' | 'DISABLED';
   restrict_devices: boolean;
+  notify_on_device_request: boolean;
   account_type: 'paid' | 'trial';
   trial_duration_minutes: number | null;
   trial_started_at: string | null;
@@ -148,7 +149,13 @@ async function upsertDeviceAndGetStatus(
     // few times. Fire-and-forget, same reasoning as notifyNewClass in
     // app/api/admin/videos/route.ts: a slow/failed push fan-out should
     // never delay or break the login flow that triggered it.
-    if (initialStatus === 'pending') {
+    // notify_on_device_request is what this ACCOUNT (not the admin
+    // receiving it) has decided about its own device requests — off by
+    // default for admin accounts (they bypass restriction entirely
+    // anyway, see isRestricted below, so their own 2nd+ device needs no
+    // approval and previously just paged every other admin for nothing)
+    // and configurable per user from the Device Manager page.
+    if (initialStatus === 'pending' && user.notify_on_device_request) {
       void notifyNewDeviceRequest(userId, user.email, deviceLabel).catch((err) => {
         console.error('[push] new-device-request notification failed', err);
       });
@@ -198,7 +205,7 @@ export async function getAuth(): Promise<AuthResult> {
 
   const { data: authorizedUser } = await supabase
     .from('authorized_users')
-    .select('id, email, role, status, restrict_devices, account_type, trial_duration_minutes, trial_started_at, trial_expires_at')
+    .select('id, email, role, status, restrict_devices, notify_on_device_request, account_type, trial_duration_minutes, trial_started_at, trial_expires_at')
     .eq('email', user.email.toLowerCase())
     .maybeSingle();
 

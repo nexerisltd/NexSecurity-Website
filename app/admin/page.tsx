@@ -102,6 +102,14 @@ function describeEvent(row: AuditRow): { label: string; detail: string; icon: JS
       return { label: 'Board created', detail: title, icon: EVENT_ICONS.board, color: 'bg-signal/10 text-signal' };
     case 'BOARD_DELETED':
       return { label: 'Board deleted', detail: row.target ?? '', icon: EVENT_ICONS.board, color: 'bg-danger/10 text-danger' };
+    case 'DEVTOOLS_DETECTED':
+    case 'SUSPICIOUS_SECURITY_EVENT':
+      return {
+        label: 'Security incident detected',
+        detail: row.actor_email ?? row.target ?? '',
+        icon: EVENT_ICONS.role,
+        color: 'bg-danger/10 text-danger',
+      };
     case 'ADMIN_ACTION':
       if (action === 'VIDEO_CREATED') return { label: 'New class added', detail: title, icon: EVENT_ICONS.class, color: 'bg-ok/10 text-ok' };
       if (action === 'EBOOK_CREATED') return { label: 'E-Book uploaded', detail: title, icon: EVENT_ICONS.ebook, color: 'bg-warn/10 text-warn' };

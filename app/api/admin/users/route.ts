@@ -14,7 +14,7 @@ export async function GET() {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from('authorized_users')
-    .select('id, email, name, role, status, restrict_devices, account_type, trial_duration_minutes, trial_started_at, trial_expires_at, created_at, updated_at')
+    .select('id, email, name, role, status, restrict_devices, notify_on_device_request, account_type, trial_duration_minutes, trial_started_at, trial_expires_at, created_at, updated_at')
     .order('created_at', { ascending: false });
 
   if (error) return NextResponse.json({ error: 'Something went wrong.' }, { status: 500 });
@@ -45,6 +45,13 @@ export async function POST(request: NextRequest) {
       role: parsed.data.role,
       status: 'ACTIVE',
       restrict_devices: parsed.data.role !== 'ADMIN',
+      // Same reasoning as restrict_devices above: an admin's own 2nd+
+      // device needs no approval (they bypass restriction entirely —
+      // see isRestricted in lib/auth.ts), so paging every other admin
+      // about it is pure noise. See supabase/migrations/
+      // 0016_device_request_notify_toggle.sql and the Device Manager
+      // page for the same thing settable per-account after creation.
+      notify_on_device_request: parsed.data.role !== 'ADMIN',
       account_type: parsed.data.account_type,
       // Only ever set for a genuine trial account — trial_started_at /
       // trial_expires_at stay null until first login (see lib/auth.ts).
