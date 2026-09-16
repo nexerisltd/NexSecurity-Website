@@ -39,12 +39,11 @@ const CHECK_INTERVAL_MS = 1000;
  * acceptable cost for a deterrent this codebase can't even guarantee
  * catches everything anyway.
  *
- * Skips entirely on touch-primary devices with no real outerWidth
- * support (most mobile browsers report outerWidth as 0 or equal to
- * innerWidth) — there's no docked-panel concept to detect there, and a
- * naive check would either always-false-negative or false-positive on
- * viewport chrome (address bar show/hide) that has nothing to do with
- * DevTools.
+ * Skips entirely on touch-primary devices (`matchMedia('(pointer:
+ * coarse)')`) — there's no reliable docked-panel signal there at all;
+ * see the check itself below for why (this used to guess from
+ * window.outerWidth being falsy, which was wrong and caused real false
+ * positives on Android).
  *
  * `isAdmin` skips detection entirely: admins are a trusted role that
  * already bypasses device restriction (see isRestricted in
@@ -59,7 +58,23 @@ export function DevToolsGuard({ userName, isAdmin }: { userName?: string | null;
   useEffect(() => {
     if (isAdmin) return;
     if (incident) return; // already locked — stop checking, nothing left to detect
-    if (typeof window === 'undefined' || !window.outerWidth) return;
+    if (typeof window === 'undefined') return;
+
+    // Docked-DevTools-via-window-size is a DESKTOP-ONLY signal. On a
+    // touch-primary device (phone/tablet) there is no reliable version
+    // of this check at all: Android Chrome reports REAL, non-zero
+    // outerWidth/outerHeight values (the earlier assumption here that
+    // mobile always reports 0 was simply wrong), and the on-screen
+    // keyboard opening alone shrinks innerHeight by 250-350px — enough
+    // to cross DOCK_THRESHOLD_PX on its own, with zero DevTools
+    // involved. That's what was actually happening: Android students
+    // tapping any text field (chat, search, a form) were getting
+    // falsely locked out. `(pointer: coarse)` is the standard, reliable
+    // way to ask "is the primary input touch, not a mouse" — checking
+    // that instead of guessing from outerWidth is what actually skips
+    // every touch device, not just the ones that happen to report 0.
+    if (window.matchMedia?.('(pointer: coarse)').matches) return;
+    if (!window.outerWidth) return;
 
     let cancelled = false;
 

@@ -99,10 +99,44 @@ const QUALITY_LABELS: Record<string, string> = {
 // below reflects the real, live-polled resolution instead of pretending a
 // manual picker works.
 
-const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4];
 
 const SEEK_SECONDS = 10;
 const HOLD_THRESHOLD_MS = 320;
+// Playback speed, remembered globally across every class — a student
+// who settles on 1.25x for lectures shouldn't have to re-pick it every
+// single time they open a video; the next class (and every one after
+// it) should just already start there. localStorage rather than a
+// per-video/per-class key on purpose: this is a personal viewing
+// preference, not something tied to any one class's content.
+const SPEED_STORAGE_KEY = 'nexsecurity:playbackSpeed';
+
+function getStoredSpeed(): number {
+  if (typeof window === 'undefined') return 1;
+  try {
+    const raw = window.localStorage.getItem(SPEED_STORAGE_KEY);
+    const parsed = raw ? Number.parseFloat(raw) : NaN;
+    // Sanity-bounded to the same range the Speed submenu itself offers
+    // (see its options below) — never trust a stray/corrupted stored
+    // value into setting a nonsensical or negative playback rate.
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 4 ? parsed : 1;
+  } catch {
+    // Safari private mode (and similar) can throw on localStorage
+    // access entirely — falling back to normal speed is the only sane
+    // behavior, not a crash.
+    return 1;
+  }
+}
+
+function storeSpeed(rate: number) {
+  try {
+    window.localStorage.setItem(SPEED_STORAGE_KEY, String(rate));
+  } catch {
+    // Same as above — a failed save just means this one pick doesn't
+    // persist; it must never break changing the speed for THIS session.
+  }
+}
+
 const HEARTBEAT_MS = 4 * 60 * 1000; // well inside the ~10-minute token expiry
 // How often to fetch a fresh Worker stream token for 'm3u8' playback
 // (see /api/video/[id]/stream-token/route.ts and its TOKEN_TTL_SECONDS,
@@ -384,6 +418,16 @@ export function VideoPlayer({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPanel, setSettingsPanel] = useState<'main' | 'speed' | 'quality'>('main');
   const [speed, setSpeedState] = useState(1);
+  // Restored after mount, not in useState's own initializer — reading
+  // localStorage during the initializer would make the client's very
+  // first render disagree with the server-rendered ("1x") markup and
+  // trigger a hydration mismatch. Applying it a tick later in an effect
+  // instead is the standard-safe way to bring in a client-only stored
+  // preference like this.
+  useEffect(() => {
+    const stored = getStoredSpeed();
+    if (stored !== 1) setSpeedState(stored);
+  }, []);
   const [quality, setQualityState] = useState('auto');
   const [qualityLevels, setQualityLevels] = useState<string[]>([]);
   const settingsRef = useRef<HTMLDivElement>(null);
@@ -658,6 +702,10 @@ export function VideoPlayer({
       // every provider, never quietly muted. Bunny's own player would
       // otherwise sometimes decide on its own to autoplay muted.
       player.unmute?.();
+      // Applies the remembered speed to the ACTUAL player the moment
+      // it's ready to accept it — separate from the `speed` state sync
+      // above, which only updates what the Settings menu displays.
+      player.setPlaybackRate?.(getStoredSpeed());
       player.on('play', () => {
         isPlayingRef.current = true;
       });
@@ -771,7 +819,14 @@ export function VideoPlayer({
           setYtBuffering(false);
           setQualityLevels(e.target.getAvailableQualityLevels?.() ?? []);
           setQualityState(e.target.getPlaybackQuality?.() ?? 'auto');
-          setSpeedState(e.target.getPlaybackRate?.() ?? 1);
+          // Applies the remembered speed to the ACTUAL player, then
+          // reads it back — rather than the old getPlaybackRate() read
+          // of whatever YouTube defaulted to (always 1), which would
+          // have silently overwritten the restored-from-storage `speed`
+          // state the moment this player became ready.
+          const storedSpeed = getStoredSpeed();
+          e.target.setPlaybackRate?.(storedSpeed);
+          setSpeedState(e.target.getPlaybackRate?.() ?? storedSpeed);
           // Resume playback — same "not trivially close to start or end"
           // rule as the Bunny path above, applied exactly once per mount.
           if (!resumeAppliedRef.current && resumeSeconds && resumeSeconds > 5) {
@@ -874,6 +929,11 @@ export function VideoPlayer({
       setYtDuration(duration);
       setYtMuted(v!.muted);
       setYtVolume(v!.volume);
+      // See the Bunny/YouTube paths above for why this is applied
+      // directly here rather than relying on the mount-effect state
+      // restore alone — that one only updates what the Settings menu
+      // displays, this is what actually changes the media element.
+      v!.playbackRate = getStoredSpeed();
       // Resume playback — same "not trivially close to start or end" rule
       // as the Bunny/YouTube paths above, applied exactly once per mount.
       if (!resumeAppliedRef.current && resumeSeconds && resumeSeconds > 5) {
@@ -1355,6 +1415,7 @@ export function VideoPlayer({
   function changeSpeed(rate: number) {
     setPlaybackRateNow(rate);
     setSpeedState(rate);
+    storeSpeed(rate);
     setSettingsOpen(false);
     setSettingsPanel('main');
     showHint(rate === 1 ? 'Normal speed' : `${rate}×`);
@@ -1905,7 +1966,13 @@ export function VideoPlayer({
                       >
                         <span aria-hidden>‹</span> Speed
                       </button>
-                      {SPEED_OPTIONS.map((rate) => (
+                      {/* YouTube's IFrame API caps out at 2x — it has no
+                          3x/4x to actually apply, so offering them there
+                          would just silently clamp to 2x while the menu
+                          claimed something else was selected. Bunny/
+                          native HTML5 video (mp4, m3u8) genuinely support
+                          higher rates, so they get the full list. */}
+                      {SPEED_OPTIONS.filter((rate) => !isYoutube || rate <= 2).map((rate) => (
                         <button
                           key={rate}
                           onClick={() => changeSpeed(rate)}

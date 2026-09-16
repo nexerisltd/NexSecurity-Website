@@ -28,18 +28,14 @@ const ITEMS = [
       </g>
     ),
   },
-  {
-    href: '/admin/boards',
-    label: 'Boards',
-    icon: (
-      <g stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
-        <rect x="3" y="3" width="7.5" height="7.5" rx="1.5" />
-        <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" />
-        <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" />
-        <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" />
-      </g>
-    ),
-  },
+  // Deliberately no "Boards" entry in this nav list anymore — board
+  // management (edit/publish/restrict) now lives directly on the
+  // Classes page below (see app/admin/videos/page.tsx), and creating a
+  // board no longer needs its own separate flow at all (see
+  // components/BoardPathPicker.tsx, used right in the "Add class"
+  // form). The page itself is untouched and still works at
+  // /admin/boards for anyone who links to it directly — only this nav
+  // entry is gone.
   {
     href: '/admin/access',
     label: 'Access',
@@ -52,7 +48,7 @@ const ITEMS = [
   },
   {
     href: '/admin/videos',
-    label: 'Classes',
+    label: 'Boards & Classes',
     icon: (
       <path
         d="m12 4 9 4-9 4-9-4 9-4Zm-6 6.2V16c0 1.1 2.7 3 6 3s6-1.9 6-3v-5.8"

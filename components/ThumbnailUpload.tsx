@@ -40,7 +40,7 @@ export function ThumbnailUpload({
 
   return (
     <div>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         {value ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={value} alt="" className="h-14 w-24 rounded-md object-cover border border-vault-border" />

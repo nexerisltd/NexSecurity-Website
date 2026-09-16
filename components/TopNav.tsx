@@ -521,7 +521,20 @@ export function TopNav({
             </button>
 
             {notifOpen && (
-              <div className="glass-panel-solid absolute right-0 z-20 mt-2 max-h-[80vh] w-80 overflow-y-auto rounded-xl py-1">
+              <div className="glass-panel-solid fixed inset-x-3 top-[4.5rem] z-20 max-h-[75vh] overflow-y-auto rounded-xl py-1 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-80 sm:max-h-[80vh]">
+                {/* Decorative "mesh" blur — a couple of large, softly
+                    blurred color blobs sitting behind the actual content
+                    (z-index below it, but still inside this panel's own
+                    translucent bg-vault-900/80 tint so they read as
+                    subtle color bleeding through frosted glass, not a
+                    separate flat layer). Purely visual — pointer-events-
+                    none so it never intercepts a tap/click meant for the
+                    list underneath it. */}
+                <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden rounded-xl">
+                  <div className="absolute -left-10 -top-12 h-36 w-36 rounded-full bg-signal/25 blur-3xl" />
+                  <div className="absolute -right-8 top-1/3 h-32 w-32 rounded-full bg-violet-500/20 blur-3xl" />
+                  <div className="absolute -bottom-10 left-1/3 h-32 w-32 rounded-full bg-signal-glow/15 blur-3xl" />
+                </div>
                 {isAdmin && (
                   <>
                     <p className="px-3.5 py-2 font-mono text-[10px] uppercase tracking-widest text-ink-faint">

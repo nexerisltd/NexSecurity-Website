@@ -52,7 +52,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Suspense fallback={null}>
           <DeviceSignalCollector />
         </Suspense>
-        {children}
+        {/* overflow-x-hidden lives here, not on <body> (see the comment
+            on body's own rule in globals.css) — same protection against
+            horizontal overflow, without <body> itself becoming a
+            clipping scroll container that breaks position: sticky
+            (TopNav's header, most notably) in Safari/iOS. */}
+        <div className="overflow-x-hidden">{children}</div>
       </body>
     </html>
   );

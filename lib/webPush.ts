@@ -101,6 +101,37 @@ export async function notifyUsers(
 }
 
 /**
+ * Walks a board's parent_id chain up to the root, returning the
+ * top-level ancestor's title — or the board's own title if it already
+ * IS top-level. A cycle-protection `seen` set (same pattern
+ * lib/boardTree.ts's ancestorTitles/ancestorIds already use) stops a
+ * corrupted/circular parent_id chain from looping forever; that should
+ * never happen given boards.parent_id's own foreign key, but a
+ * notification send is exactly the kind of fire-and-forget background
+ * work that must never be the thing that hangs.
+ */
+async function getTopLevelBoardTitle(boardId: string, boardTitle: string, parentId: string | null): Promise<string> {
+  const adminClient = createSupabaseAdminClient();
+  let currentParentId = parentId;
+  let currentTitle = boardTitle;
+  const seen = new Set<string>([boardId]);
+
+  while (currentParentId && !seen.has(currentParentId)) {
+    seen.add(currentParentId);
+    const { data: parent } = await adminClient
+      .from('boards')
+      .select('title, parent_id')
+      .eq('id', currentParentId)
+      .maybeSingle();
+    if (!parent) break;
+    currentTitle = parent.title;
+    currentParentId = parent.parent_id;
+  }
+
+  return currentTitle;
+}
+
+/**
  * Who should hear about something new on this board — the shared rule
  * behind notifyNewClass/notifyNewEbook/notifyNewRoutine below: admins
  * always, plus either every active user (universal board) or only the
@@ -108,15 +139,30 @@ export async function notifyUsers(
  * the board itself enforces (see lib/boardAccess.ts). The admin who
  * just created the thing is excluded — they don't need a notification
  * about their own action.
+ *
+ * Also resolves `topLevelTitle` — the root ancestor of a deeply nested
+ * board (Board 1 › Board 2 › ... this board), so a notification for a
+ * class added several levels deep still tells a user WHICH top-level
+ * section it landed in, not just the immediate (often generically-
+ * named, like "Chapter 3") sub-board title alone.
  */
-async function getBoardRecipients(boardId: string, excludeEmail: string): Promise<{ boardTitle: string; recipients: string[] } | null> {
+async function getBoardRecipients(
+  boardId: string,
+  excludeEmail: string
+): Promise<{ boardTitle: string; topLevelTitle: string; recipients: string[] } | null> {
   const adminClient = createSupabaseAdminClient();
 
-  const { data: board } = await adminClient.from('boards').select('title, visibility').eq('id', boardId).maybeSingle();
+  const { data: board } = await adminClient
+    .from('boards')
+    .select('title, visibility, parent_id')
+    .eq('id', boardId)
+    .maybeSingle();
   if (!board) return null;
 
+  const topLevelTitle = await getTopLevelBoardTitle(boardId, board.title, board.parent_id);
+
   const { data: users } = await adminClient.from('authorized_users').select('email, role').eq('status', 'ACTIVE');
-  if (!users || users.length === 0) return { boardTitle: board.title, recipients: [] };
+  if (!users || users.length === 0) return { boardTitle: board.title, topLevelTitle, recipients: [] };
 
   let recipients: string[];
   if (board.visibility === 'restricted') {
@@ -128,7 +174,14 @@ async function getBoardRecipients(boardId: string, excludeEmail: string): Promis
   }
 
   recipients = recipients.filter((e) => e.toLowerCase() !== excludeEmail.toLowerCase());
-  return { boardTitle: board.title, recipients };
+  return { boardTitle: board.title, topLevelTitle, recipients };
+}
+
+/** "Board 1 › Board 2" when the class sits under a nested sub-board,
+ * or just "Board 1" when the board it was added to is already
+ * top-level — never a redundant "Board 1 › Board 1". */
+function boardPathLabel(result: { boardTitle: string; topLevelTitle: string }): string {
+  return result.topLevelTitle === result.boardTitle ? result.boardTitle : `${result.topLevelTitle} › ${result.boardTitle}`;
 }
 
 /**
@@ -212,7 +265,7 @@ export async function notifyNewClass(boardId: string, videoTitle: string, videoI
 
   await notifyUsers(result.recipients, {
     type: 'class',
-    title: `New class in ${result.boardTitle}`,
+    title: `New class in ${boardPathLabel(result)}`,
     body: videoTitle,
     url: `/learn/video/${videoId}`,
   });
@@ -225,7 +278,7 @@ export async function notifyNewEbook(boardId: string, ebookTitle: string, create
 
   await notifyUsers(result.recipients, {
     type: 'ebook',
-    title: `New e-book in ${result.boardTitle}`,
+    title: `New e-book in ${boardPathLabel(result)}`,
     body: ebookTitle,
     // e-books don't have their own page — they're listed alongside
     // their board on /learn/ebooks (see app/learn/ebooks/page.tsx).

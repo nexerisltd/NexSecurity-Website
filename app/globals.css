@@ -30,7 +30,16 @@ html {
 body {
   font-feature-settings: 'ss01' on, 'ss02' on;
   position: relative;
-  overflow-x: hidden;
+  /* overflow-x was here before, but overflow-x: hidden directly on
+     <body> (or <html>) is a well-documented WebKit/Safari quirk that
+     silently breaks position: sticky for every descendant — including
+     TopNav's own sticky header. Per spec, a non-'visible' overflow-x
+     with overflow-y left at its default also computes overflow-y as
+     'auto' rather than 'visible', which is exactly what turns <body>
+     into a "clipping scroll container" that sticky positioning then
+     sticks to instead of the real viewport. Moved to a wrapper div
+     inside <body> instead (see app/layout.tsx) — same horizontal-
+     overflow protection, without body itself becoming that container. */
 }
 
 /* Liquid Glass background: soft, blurred color blobs fixed behind every

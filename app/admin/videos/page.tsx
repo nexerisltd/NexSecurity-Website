@@ -6,9 +6,17 @@ import { useSearchParams } from 'next/navigation';
 import { ThumbnailUpload } from '@/components/ThumbnailUpload';
 import { Modal } from '@/components/Modal';
 import { CascadingBoardSelect } from '@/components/CascadingBoardSelect';
+import { BoardPathPicker, type BoardPathPickerHandle } from '@/components/BoardPathPicker';
+import { BoardEditPanel, type EditableBoard } from '@/components/BoardEditPanel';
 import { buildBoardTree, idsWithChildren, type BoardNode } from '@/lib/boardTree';
 
-type Board = { id: string; title: string; parent_id: string | null; visibility?: 'universal' | 'restricted' };
+// Widened to the full board shape (was just { id, title, parent_id,
+// visibility? }) now that this page also embeds board management
+// (Edit/Publish/Delete — see BoardEditPanel below) that the standalone
+// Boards admin page used to be the only place for. /api/admin/boards
+// already returned every one of these fields; only this page's own
+// narrower local type was ever leaving the rest unused.
+type Board = EditableBoard;
 type Resource = { id: string; title: string; url: string; sort_order: number };
 type Video = {
   id: string;
@@ -119,9 +127,12 @@ export default function AdminVideosPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editingBoardId, setEditingBoardId] = useState<string | null>(null);
+  const [accessCounts, setAccessCounts] = useState<Record<string, number>>({});
 
   // Create form
   const [boardId, setBoardId] = useState('');
+  const pathPickerRef = useRef<BoardPathPickerHandle>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [thumbnailUrl, setThumbnailUrl] = useState('');
@@ -164,6 +175,7 @@ export default function AdminVideosPage() {
   const didDefaultCollapse = useRef(false);
 
   const tree = useMemo(() => buildBoardTree(boards), [boards]);
+  const editingBoard = useMemo(() => boards.find((b) => b.id === editingBoardId) ?? null, [boards, editingBoardId]);
   const parentIds = useMemo(() => idsWithChildren(boards), [boards]);
   const videosByBoard = useMemo(() => {
     const map = new Map<string, Video[]>();
@@ -276,13 +288,14 @@ export default function AdminVideosPage() {
     const isSearching = !!matchingVideoIds;
     const isCollapsed = !isSearching && collapsedIds.has(node.id);
     const showToggle = hasChildren || nodeVideos.length > 0;
+    const accessCount = accessCounts[node.id] ?? 0;
 
     return (
       <div
         key={node.id}
         className="overflow-hidden rounded-xl border border-vault-border bg-vault-900 backdrop-blur-xl shadow-glass"
       >
-        <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
             {showToggle ? (
               <button
@@ -303,15 +316,79 @@ export default function AdminVideosPage() {
             ) : (
               <span className="w-3.5 shrink-0" aria-hidden="true" />
             )}
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-ink">{node.title}</p>
-              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
-                {nodeVideos.length} class{nodeVideos.length === 1 ? '' : 'es'}
-                {hasChildren
-                  ? ` · ${node.children.length} sub-board${node.children.length === 1 ? '' : 's'}`
-                  : ''}
-              </p>
-            </div>
+            {/* Same reasoning as the Boards admin page: the chevron is a
+                tiny, precise target, especially painful to tap
+                accurately on a phone. The title itself is a much bigger,
+                easier target and toggles the exact same state. */}
+            {showToggle ? (
+              <button
+                type="button"
+                onClick={() => toggleCollapsed(node.id)}
+                className="min-w-0 flex-1 text-left"
+                aria-label={isCollapsed ? `Expand ${node.title}` : `Collapse ${node.title}`}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-ink">{node.title}</p>
+                  <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+                    {nodeVideos.length} class{nodeVideos.length === 1 ? '' : 'es'}
+                    {hasChildren
+                      ? ` · ${node.children.length} sub-board${node.children.length === 1 ? '' : 's'}`
+                      : ''}{' '}
+                    · <span className={node.published ? 'text-ok' : 'text-warn'}>{node.published ? 'Published' : 'Draft'}</span>
+                    {node.visibility === 'restricted' && (
+                      <>
+                        {' '}
+                        · <span className="text-signal-glow">Restricted · {accessCount} user{accessCount === 1 ? '' : 's'}</span>
+                      </>
+                    )}
+                  </p>
+                </div>
+              </button>
+            ) : (
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-ink">{node.title}</p>
+                <p className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
+                  {nodeVideos.length} class{nodeVideos.length === 1 ? '' : 'es'}
+                  {hasChildren
+                    ? ` · ${node.children.length} sub-board${node.children.length === 1 ? '' : 's'}`
+                    : ''}{' '}
+                  · <span className={node.published ? 'text-ok' : 'text-warn'}>{node.published ? 'Published' : 'Draft'}</span>
+                  {node.visibility === 'restricted' && (
+                    <>
+                      {' '}
+                      · <span className="text-signal-glow">Restricted · {accessCount} user{accessCount === 1 ? '' : 's'}</span>
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
+          </div>
+          {/* Board management ported from the (now nav-hidden) Boards
+              admin page — no "+ Sub-board"/"+ Class" here anymore since
+              BoardPathPicker on the "Add class" form above already
+              creates nested boards inline; this is just Edit/Publish/
+              Delete for a board that already exists. */}
+          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            <button
+              disabled={busyId === node.id}
+              onClick={() => togglePublished(node)}
+              className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink disabled:opacity-50"
+            >
+              {node.published ? 'Unpublish' : 'Publish'}
+            </button>
+            <button
+              onClick={() => setEditingBoardId(node.id)}
+              className="rounded-md border border-vault-border px-2.5 py-1 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+            >
+              Edit
+            </button>
+            <button
+              disabled={busyId === node.id}
+              onClick={() => removeBoard(node.id)}
+              className="rounded-md border border-danger/30 px-2.5 py-1 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+            >
+              Delete
+            </button>
           </div>
         </div>
 
@@ -344,6 +421,7 @@ export default function AdminVideosPage() {
 
   useEffect(() => {
     load();
+    loadAccessCounts();
   }, []);
 
   // Deep-link support: /admin/videos?board=<id> (used by the "+ Class"
@@ -378,20 +456,28 @@ export default function AdminVideosPage() {
       );
       return;
     }
-    if (!boardId) {
-      setError('Choose which board this class belongs to.');
-      return;
-    }
     if (createProvider === 'm3u8' && !refererInput.trim()) {
       setError('Enter the Referer this stream requires.');
       return;
     }
 
+    // Resolves (and auto-creates, for any level typed that doesn't
+    // already exist — see that component) the Board › Sub-board › ...
+    // path typed into the form below, BEFORE this class itself is
+    // created — the class always needs a real, already-existing
+    // board_id to attach to.
+    const resolvedPath = await pathPickerRef.current?.resolvePath();
+    if (!resolvedPath || 'error' in resolvedPath) {
+      setError(resolvedPath && 'error' in resolvedPath ? resolvedPath.error : 'Choose which board this class belongs to.');
+      return;
+    }
+    const resolvedBoardId = resolvedPath.boardId;
+
     const res = await fetch('/api/admin/videos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        board_id: boardId,
+        board_id: resolvedBoardId,
         title,
         description: description || null,
         thumbnail_url: thumbnailUrl || null,
@@ -454,10 +540,49 @@ export default function AdminVideosPage() {
     load();
   }
 
+  async function loadAccessCounts() {
+    const res = await fetch('/api/admin/access-summary');
+    const data = await res.json();
+    if (res.ok) setAccessCounts(data.counts ?? {});
+  }
+
+  // Board management, ported from the (now nav-hidden) standalone
+  // Boards admin page — see components/AdminSidebar.tsx's comment for
+  // why that page no longer needs its own nav entry. Identical logic;
+  // this is just where it lives now.
+  async function togglePublished(board: Board) {
+    setBusyId(board.id);
+    // Optimistic: flip it in place immediately instead of waiting on a
+    // full reload — the request still runs, it just doesn't block the
+    // click from feeling instant.
+    setBoards((prev) => prev.map((b) => (b.id === board.id ? { ...b, published: !b.published } : b)));
+    const res = await fetch(`/api/admin/boards/${board.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ published: !board.published }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error ?? 'Could not update board.');
+      setBoards((prev) => prev.map((b) => (b.id === board.id ? { ...b, published: board.published } : b)));
+    }
+    setBusyId(null);
+  }
+
+  async function removeBoard(id: string) {
+    if (!confirm('Delete this board? Child boards will also be removed.')) return;
+    setBusyId(id);
+    const res = await fetch(`/api/admin/boards/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) setError(data.error ?? 'Could not delete board.');
+    setBusyId(null);
+    load();
+  }
+
   return (
     <div>
       <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-signal-glow">Admin</p>
-      <h1 className="mt-2 font-display text-2xl font-semibold text-ink">Classes</h1>
+      <h1 className="mt-2 font-display text-2xl font-semibold text-ink">Boards &amp; Classes</h1>
       <p className="mt-2 max-w-2xl text-sm text-ink-dim">
         Attach a class (video) to a board — pick the top-level board first, then drill down to
         the exact one it belongs under. The list below is grouped the same way: collapse a board
@@ -472,7 +597,7 @@ export default function AdminVideosPage() {
       >
         <div className="sm:col-span-2">
           <Field label="Board">
-            <CascadingBoardSelect boards={boards} value={boardId} onChange={setBoardId} />
+            <BoardPathPicker ref={pathPickerRef} boards={boards} onBoardsCreated={load} initialBoardId={boardId} />
           </Field>
         </div>
         <Field label="Title">
@@ -489,7 +614,7 @@ export default function AdminVideosPage() {
         </Field>
         <div className="sm:col-span-2">
           <Field label="Video source">
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-x-4 gap-y-2">
               <label className="flex items-center gap-1.5 text-sm text-ink">
                 <input
                   type="radio"
@@ -763,6 +888,20 @@ export default function AdminVideosPage() {
           <VideoEditPanel video={editingVideo} boards={boards} onSaved={load} onError={setError} />
         </Modal>
       )}
+
+      {editingBoard && (
+        <Modal title={`Edit board "${editingBoard.title}"`} subtitle="Classes" onClose={() => setEditingBoardId(null)} wide>
+          <BoardEditPanel
+            board={editingBoard}
+            boards={boards}
+            onSaved={() => {
+              load();
+              loadAccessCounts();
+            }}
+            onError={setError}
+          />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -930,7 +1069,7 @@ function VideoEditPanel({
         </div>
         <div className="sm:col-span-2">
           <Field label="Video source">
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-x-4 gap-y-2">
               <label className="flex items-center gap-1.5 text-sm text-ink">
                 <input
                   type="radio"
