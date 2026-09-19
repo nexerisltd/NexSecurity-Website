@@ -23,3 +23,20 @@ workers_dev = true
 # env var (Vercel -> Project -> Settings -> Environment Variables) —
 # both sides derive the same AES-256-GCM key from this one string (see
 # src/streamToken.ts and ../lib/streamToken.ts).
+
+# The app's own origin (NOT this Worker's) — where a detected
+# IP-mismatch or burst-fetch (see reportSuspiciousActivity in
+# src/index.ts) gets fire-and-forget POSTed to
+# app/api/security/token-mismatch/route.ts. A plain [vars] entry, not a
+# secret, since it's just a URL — no need for `wrangler secret put` here.
+[vars]
+APP_ORIGIN = "https://learn.nexsecurity.example" # <- replace with your real deployed app URL
+
+# SECURITY_WEBHOOK_SECRET IS a secret (same reasoning as
+# STREAM_TOKEN_SECRET above) — set it with:
+#   npx wrangler secret put SECURITY_WEBHOOK_SECRET
+# using the EXACT SAME value as the Next.js app's SECURITY_WEBHOOK_SECRET
+# env var. This is what lets app/api/security/token-mismatch/route.ts
+# trust that a report actually came from this Worker and not from some
+# random POST to a public URL trying to get someone else auto-blocked.
+

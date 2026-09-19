@@ -1,21 +1,25 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createHash } from 'node:crypto';
 import { requireAuthorized } from '@/lib/auth';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { uuidSchema } from '@/lib/validation';
 import { checkRateLimit } from '@/lib/rateLimit';
 import { logAuditEvent } from '@/lib/audit';
 import { canAccessBoard } from '@/lib/boardAccess';
-import { createStreamToken } from '@/lib/streamToken';
+import { createStreamToken, hashForToken } from '@/lib/streamToken';
+import { getClientIp } from '@/lib/requestInfo';
 
 export const dynamic = 'force-dynamic';
 
 // Short enough that a leaked/copied `t=` value (devtools Network tab,
-// browser history, a shared screen) is worthless within a couple of
-// minutes; long enough that VideoPlayer.tsx's refresh loop (see
-// STREAM_TOKEN_REFRESH_MS there) has comfortable headroom to fetch the
-// next one before this one expires, even on a slow/flaky connection.
-const TOKEN_TTL_SECONDS = 75;
+// browser history, a shared screen) is worthless within seconds; long
+// enough that VideoPlayer.tsx's refresh loop (see STREAM_TOKEN_REFRESH_MS
+// there) has comfortable headroom to fetch the next one before this one
+// expires, even on a slow/flaky connection. Was 75s — dropped once the
+// token also got IP-bound (see the `ip` field below and
+// worker/src/index.ts): TTL is now defense-in-depth on top of that check,
+// not the only thing standing between a copied URL and a stranger's
+// browser, so it no longer needs to carry the whole burden alone.
+const TOKEN_TTL_SECONDS = 25;
 
 /**
  * Mints a short-lived, ENCRYPTED token the Cloudflare Worker
@@ -76,11 +80,21 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   // (encrypted, alongside everything else) in a browser-visible URL, so
   // it gets the same "don't put real PII where it doesn't need to be"
   // treatment as the rest of this payload.
-  const uid = createHash('sha256').update(auth.user.email.toLowerCase()).digest('hex').slice(0, 24);
+  const uid = hashForToken(auth.user.email.toLowerCase());
+
+  // IP-binds the token to whatever network THIS mint request came from
+  // — getClientIp() is the same "closest hop" IP lib/auth.ts already
+  // trusts for device ip_history, and hashForToken() gives the Worker
+  // something to compare against without this ever carrying a raw IP
+  // across the wire in a browser-visible URL. See worker/src/index.ts
+  // for the matching check on every playlist/segment request.
+  const ip = hashForToken(getClientIp());
 
   const token = createStreamToken({
     vid: videoId,
     uid,
+    ip,
+    aid: auth.user.id,
     exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS,
     sr: video.source_ref as string,
     rh: (video.referer_header as string | null) ?? null,

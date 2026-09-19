@@ -252,3 +252,18 @@ export const securityIncidentSchema = z.object({
 export const reviewStatusUpdateSchema = z.object({
   review_status: z.enum(['pending', 'reviewed', 'false_positive', 'confirmed_abuse', 'action_taken']),
 });
+
+// worker/src/index.ts's fire-and-forget report body (see
+// reportSuspiciousActivity there and app/api/security/token-mismatch/
+// route.ts) — aid/uid/videoId are opaque identifiers already generated
+// server-side when the token was minted, not user input in the normal
+// sense, but this still validates shape since the request is reaching
+// this route over the open internet (gated by a shared-secret header
+// instead of a user session — see that route).
+export const tokenMismatchReportSchema = z.object({
+  reason: z.enum(['ip_mismatch', 'burst_fetch']),
+  aid: z.string().uuid(),
+  videoId: z.string().uuid(),
+  uid: z.string().min(1).max(64),
+  ip: z.string().min(1).max(64),
+});

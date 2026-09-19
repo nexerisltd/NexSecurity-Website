@@ -1,4 +1,4 @@
-import { decryptStreamToken } from './streamToken';
+import { decryptStreamToken, hashForToken } from './streamToken';
 import {
   decodeProxyTarget,
   isSafeProxyTarget,
@@ -10,6 +10,18 @@ import { checkRateLimit } from './rateLimit';
 
 export interface Env {
   STREAM_TOKEN_SECRET: string;
+  // Where to fire-and-forget an IP-mismatch report (see
+  // reportTokenMismatch below) — the app's own origin, e.g.
+  // https://learn.example.com. Set via `wrangler.toml` [vars] (not a
+  // secret itself, just a URL).
+  APP_ORIGIN: string;
+  // Shared secret the app's /api/security/token-mismatch route checks
+  // against a header on this request, so that endpoint only ever
+  // accepts reports that actually came from this Worker — a public
+  // internet route that logged/auto-blocked on an unauthenticated POST
+  // would itself be an abuse vector. Set via `wrangler secret put
+  // SECURITY_WEBHOOK_SECRET`, same as STREAM_TOKEN_SECRET.
+  SECURITY_WEBHOOK_SECRET: string;
 }
 
 // Matches hls-proxy's old 240/60s (see
@@ -17,6 +29,17 @@ export interface Env {
 // volume, since this Worker now serves exactly what that route used to.
 const RATE_LIMIT = 240;
 const RATE_LIMIT_WINDOW_SECONDS = 60;
+
+// Separate, much tighter budget purely for the burst-abuse SIGNAL above
+// (not enforcement — that's still RATE_LIMIT) — a real hls.js player
+// pulls segments in a steady drip a few seconds apart, nowhere near this;
+// a bulk downloader grabbing a whole video's segments back-to-back trips
+// it in seconds. Deliberately loose enough not to false-positive on a
+// fast connection buffering ahead or a user scrubbing the seek bar
+// repeatedly, deliberately tight enough that an actual bulk grab still
+// trips it well before RATE_LIMIT's own 240/60s would.
+const BURST_LIMIT = 40;
+const BURST_WINDOW_SECONDS = 5;
 
 // hls.js ব্রাউজার থেকে সরাসরি এই Worker-কে (আলাদা origin/domain) call
 // করে, তাই CORS header ছাড়া ব্রাউজার response-টা silently reject করে
@@ -78,6 +101,52 @@ function jsonError(message: string, status: number): Response {
 }
 
 /**
+ * Fire-and-forget report to the app backend for either of two signals
+ * this Worker can detect entirely on its own, with no Supabase access
+ * (see the module doc comment below for why that's deliberate):
+ *   - 'ip_mismatch': a token's embedded IP hash doesn't match the
+ *     request actually using it — i.e. someone opened a copied `t=` URL
+ *     from a different network than the one that originally minted it
+ *     (see the `ip` field in ./streamToken.ts).
+ *   - 'burst_fetch': the SAME token is being used to pull segments far
+ *     faster than real playback ever would (see BURST_LIMIT below) —
+ *     consistent with a bulk downloader, not a video player.
+ * Either POSTs to app/api/security/token-mismatch/route.ts, which is
+ * what actually drives the auto-block in
+ * app/api/security/incident/route.ts's shared logic. Deliberately
+ * swallows its own errors (network blip, app briefly down) — a failed
+ * report must never turn into a 500 for the request that triggered it,
+ * and for 'ip_mismatch' there's no request-blocking value left to get
+ * from it anyway since the 403 has already been decided by the caller.
+ */
+function reportSuspiciousActivity(
+  env: Env,
+  ctx: ExecutionContext,
+  reason: 'ip_mismatch' | 'burst_fetch',
+  payload: { aid: string; vid: string; uid: string },
+  requestIp: string
+): void {
+  if (!env.APP_ORIGIN || !env.SECURITY_WEBHOOK_SECRET) return;
+  const body = JSON.stringify({
+    reason,
+    aid: payload.aid,
+    videoId: payload.vid,
+    uid: payload.uid,
+    ip: requestIp,
+  });
+  ctx.waitUntil(
+    fetch(`${env.APP_ORIGIN.replace(/\/+$/, '')}/api/security/token-mismatch`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Security-Webhook-Secret': env.SECURITY_WEBHOOK_SECRET,
+      },
+      body,
+    }).catch((err) => console.error('[stream-worker] suspicious-activity report failed', err))
+  );
+}
+
+/**
  * Streams an admin-configured .m3u8 (HLS) playlist and its segments to
  * an authorized viewer, attaching the Referer header the source CDN
  * requires — ported from ../../app/api/video/[id]/hls-proxy/route.ts,
@@ -124,8 +193,38 @@ export default {
     // actually being requested.
     if (payload.vid !== videoId) return jsonError('Access denied.', 403);
 
+    // IP binding: reject (and report) a token being used from a
+    // different network than the one that minted it — see the `ip`
+    // field's doc comment in ./streamToken.ts. cf-connecting-ip is set
+    // by Cloudflare's edge itself from the actual TCP connection, not a
+    // client-suppliable header, so this can't be spoofed by whatever
+    // tool/browser is making the request (Soul Browser, curl, a
+    // downloader extension — all the same from here). Checked before
+    // the rate limit below so a mismatched request doesn't even spend
+    // budget from the legitimate viewer's own bucket.
+    const requestIp = request.headers.get('cf-connecting-ip') ?? '';
+    const requestIpHash = await hashForToken(requestIp || 'unknown');
+    if (requestIpHash !== payload.ip) {
+      reportSuspiciousActivity(env, ctx, 'ip_mismatch', payload, requestIp);
+      return jsonError('Access denied.', 403);
+    }
+
     const allowed = checkRateLimit(payload.uid, RATE_LIMIT, RATE_LIMIT_WINDOW_SECONDS);
     if (!allowed) return jsonError('Too many requests.', 429);
+
+    // Burst-abuse signal: a real player fetches segments roughly in
+    // playback order, a handful at a time as the buffer needs them. A
+    // bulk downloader (grabbing every segment as fast as possible to
+    // reassemble the whole video offline) blows way past that inside a
+    // few seconds while staying comfortably under RATE_LIMIT's 240/60s
+    // budget. This doesn't block the request — the token is still valid
+    // and the viewer might just be seeking around — it only reports,
+    // same fire-and-forget path as the IP mismatch above, so a human
+    // (or the existing incident-count auto-block) can weigh it alongside
+    // whatever else that account has triggered.
+    if (!checkRateLimit(`burst:${payload.uid}`, BURST_LIMIT, BURST_WINDOW_SECONDS)) {
+      reportSuspiciousActivity(env, ctx, 'burst_fetch', payload, requestIp);
+    }
 
     // Range requests (seeking, or a player resuming mid-segment) get
     // skipped from the shared edge cache below — Cache API + partial-

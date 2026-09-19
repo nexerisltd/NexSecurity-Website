@@ -140,13 +140,14 @@ function storeSpeed(rate: number) {
 const HEARTBEAT_MS = 4 * 60 * 1000; // well inside the ~10-minute token expiry
 // How often to fetch a fresh Worker stream token for 'm3u8' playback
 // (see /api/video/[id]/stream-token/route.ts and its TOKEN_TTL_SECONDS,
-// currently 75s) — comfortably under that TTL so a valid token is
-// always in streamTokenRef by the time hls.js's xhrSetup needs one,
-// even on a slow connection. Unrelated to HEARTBEAT_MS above: that one
-// only re-verifies auth without touching an already-playing stream;
-// this one is what actually keeps m3u8 playback alive past the token's
-// short lifetime for a multi-hour class.
-const STREAM_TOKEN_REFRESH_MS = 45 * 1000;
+// currently 25s — shortened once the token also became IP-bound, see
+// that route's comment) — comfortably under that TTL so a valid token is
+// always in streamTokenRef by the time hls.js's xhrSetup needs one, even
+// on a slow connection. Unrelated to HEARTBEAT_MS above: that one only
+// re-verifies auth without touching an already-playing stream; this one
+// is what actually keeps m3u8 playback alive past the token's short
+// lifetime for a multi-hour class.
+const STREAM_TOKEN_REFRESH_MS = 10 * 1000;
 const YT_TIME_POLL_MS = 400; // YT's API has no timeupdate event, only polling
 const PROGRESS_SAVE_MS = 15 * 1000; // "resume playback" checkpoint cadence — YouTube only now (see effect below); Bunny/mp4/HLS already save themselves on pause/end/unload.
 

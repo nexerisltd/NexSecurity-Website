@@ -32,6 +32,19 @@ export type StreamTokenPayload = {
    * the route) — only used for the Worker's own KV rate limiting,
    * never anything that needs to round-trip back to Supabase. */
   uid: string;
+  /** sha256 of the client IP that requested THIS token (truncated, same
+   * treatment as uid — see the route). The Worker hashes each incoming
+   * request's own IP the same way and rejects on mismatch (see
+   * worker/src/index.ts) — this is what makes a copied `t=` URL stop
+   * working the moment it's opened from a different network, regardless
+   * of what browser/tool opens it. */
+  ip: string;
+  /** authorized_users.id (a random UUID, not personal information) —
+   * used ONLY by the Worker's fire-and-forget mismatch report back to
+   * app/api/security/token-mismatch/route.ts (see worker/src/index.ts)
+   * so a detected leak attempt can be tied to the right account for
+   * auto-blocking. Never echoed back to the browser in any response. */
+  aid: string;
   /** Epoch seconds. */
   exp: number;
   /** The actual source CDN playlist URL — see lib/m3u8.ts. */
@@ -73,4 +86,15 @@ export function createStreamToken(payload: StreamTokenPayload): string {
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const authTag = cipher.getAuthTag();
   return Buffer.concat([iv, authTag, ciphertext]).toString('base64url');
+}
+
+/**
+ * Same truncated-sha256 treatment as the existing `uid` field (see the
+ * route that calls this) — used for BOTH uid (from email) and the new
+ * `ip` field, so there's one place, not two, defining "opaque identifier
+ * for this payload". worker/src/index.ts computes the request's own IP
+ * hash with an equivalent Web Crypto implementation and compares.
+ */
+export function hashForToken(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 24);
 }

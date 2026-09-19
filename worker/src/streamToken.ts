@@ -10,10 +10,27 @@
 export type StreamTokenPayload = {
   vid: string;
   uid: string;
+  ip: string;
+  aid: string;
   exp: number;
   sr: string;
   rh: string | null;
 };
+
+/**
+ * Web Crypto counterpart of ../../lib/streamToken.ts's hashForToken() —
+ * same truncated-sha256-hex scheme, so a request's own IP hashes to the
+ * exact same string the mint route computed for payload.ip. Used by
+ * index.ts to check the IP binding on every playlist/segment request.
+ */
+export async function hashForToken(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const hex = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return hex.slice(0, 24);
+}
 
 const IV_LENGTH = 12;
 const TAG_LENGTH_BYTES = 16;
@@ -75,6 +92,8 @@ export async function decryptStreamToken(token: string, secret: string): Promise
     if (
       typeof parsed?.vid === 'string' &&
       typeof parsed?.uid === 'string' &&
+      typeof parsed?.ip === 'string' &&
+      typeof parsed?.aid === 'string' &&
       typeof parsed?.exp === 'number' &&
       typeof parsed?.sr === 'string' &&
       (typeof parsed?.rh === 'string' || parsed?.rh === null)

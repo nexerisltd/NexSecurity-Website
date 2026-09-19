@@ -6,6 +6,7 @@ import { checkRateLimit } from '@/lib/rateLimit';
 import { logAuditEvent, countSecurityIncidents } from '@/lib/audit';
 import { notifySecurityIncident } from '@/lib/webPush';
 import { getClientIp, getDeviceLabel, getDeviceId, splitDeviceLabel } from '@/lib/requestInfo';
+import { maybeAutoBlockAccount } from '@/lib/autoBlock';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,27 +32,13 @@ function getMaxSecurityAttempts(): number | null {
  * lib/requestInfo.ts, user_devices), not a second one invented for this
  * feature.
  *
- * This is a RECORDING endpoint, not an access-control decision by
- * itself — requireAuthorized() confirms the account is real and active,
- * same as every other protected route, but nothing here bans or
- * disables anyone. A human reviewing app/admin/security/page.tsx decides
- * whether an incident was actually piracy/abuse; frontend DevTools
- * detection alone is treated as a signal, never as proof (see
- * DEVTOOLS_DETECTED vs the review_status column added in
- * supabase/migrations/0015_security_incidents.sql).
+ * Also the primary ENFORCEMENT point (see lib/autoBlock.ts) — a
+ * DevTools detection auto-blocks the account immediately unless that
+ * account has auto_block_on_incident off. This route's sibling for the
+ * Worker's own IP-mismatch/burst-fetch signals is
+ * app/api/security/token-mismatch/route.ts, which calls the exact same
+ * helper.
  */
-// How long an auto-block from a single detected incident lasts before it
-// expires on its own (see supabase/migrations/0017_temp_block.sql —
-// blocked_until in the past is the same as not blocked). Configurable per
-// deployment, same reasoning as MAX_SECURITY_ATTEMPTS below: this route
-// has no real policy opinion baked in beyond "block by default", so the
-// actual duration is left to whoever runs this.
-function getAutoBlockMinutes(): number {
-  const raw = process.env.AUTO_BLOCK_MINUTES;
-  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60 * 24; // default: 24h
-}
-
 export async function POST(request: NextRequest) {
   const auth = await requireAuthorized();
   if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
@@ -141,48 +128,19 @@ export async function POST(request: NextRequest) {
   const maxAttempts = getMaxSecurityAttempts();
   const remainingAttempts = maxAttempts !== null ? Math.max(0, maxAttempts - attemptNumber) : null;
 
-  // Enforcement (see supabase/migrations/0017_temp_block.sql). Blocks on
-  // THIS very incident — not waiting for a threshold to be crossed —
-  // because a caught DevTools session already means the leak attempt
-  // happened; per-account auto_block_on_incident (default on, flippable
-  // from the admin's user detail page) is the opt-out for an account an
-  // admin trusts enough not to auto-block, not a retry budget. Skips
-  // entirely for admins (never reachable here anyway — see the early
-  // `{ skip: true }` return above) and for an account already blocked
-  // further out than this would set it (an admin's own longer manual
-  // block should never get shortened by a routine auto-block).
-  let blockedUntil: string | null = null;
-  let blockReason: string | null = null;
-  if (auth.user.auto_block_on_incident) {
-    const candidateUntil = new Date(Date.now() + getAutoBlockMinutes() * 60_000).toISOString();
-    const existingUntil = auth.user.blocked_until;
-    if (!existingUntil || new Date(existingUntil).getTime() < new Date(candidateUntil).getTime()) {
-      blockedUntil = candidateUntil;
-      blockReason = `Automatic: ${parsed.data.detectionType.replace(/_/g, ' ').toLowerCase()} (attempt #${attemptNumber})`;
-
-      const adminClient = createSupabaseAdminClient();
-      const { error: blockError } = await adminClient
-        .from('authorized_users')
-        .update({ blocked_until: blockedUntil, block_reason: blockReason })
-        .eq('id', auth.user.id);
-
-      if (blockError) {
-        console.error('[security] failed to auto-block account', blockError);
-        blockedUntil = null;
-        blockReason = null;
-      } else {
-        await logAuditEvent('USER_AUTO_BLOCKED', auth.user.email, auth.user.id, {
-          incident_id: incidentId,
-          detection_type: parsed.data.detectionType,
-          blocked_until: blockedUntil,
-          attempt_number: attemptNumber,
-        });
-      }
-    } else {
-      blockedUntil = existingUntil;
-      blockReason = auth.user.block_reason;
-    }
-  }
+  // Enforcement (see lib/autoBlock.ts / supabase/migrations/
+  // 0017_temp_block.sql). Blocks on THIS very incident — not waiting for
+  // a threshold to be crossed — because a caught DevTools session
+  // already means the leak attempt happened; per-account
+  // auto_block_on_incident (default on, flippable from the admin's user
+  // detail page) is the opt-out for an account an admin trusts enough
+  // not to auto-block, not a retry budget.
+  const { blockedUntil, blockReason } = await maybeAutoBlockAccount(
+    auth.user,
+    'USER_AUTO_BLOCKED',
+    `Automatic: ${parsed.data.detectionType.replace(/_/g, ' ').toLowerCase()} (attempt #${attemptNumber})`,
+    { incident_id: incidentId, detection_type: parsed.data.detectionType, attempt_number: attemptNumber }
+  );
 
   return NextResponse.json({
     nsUserId: auth.user.id,
