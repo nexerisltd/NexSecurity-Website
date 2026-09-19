@@ -170,6 +170,9 @@ type UserRow = {
   status: 'ACTIVE' | 'DISABLED';
   restrict_devices: boolean;
   notify_on_device_request: boolean;
+  auto_block_on_incident: boolean;
+  blocked_until: string | null;
+  block_reason: string | null;
 };
 
 export default function UserDevicesPage() {
@@ -213,7 +216,9 @@ export default function UserDevicesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  async function updateUser(patch: Partial<Pick<UserRow, 'restrict_devices' | 'notify_on_device_request'>>) {
+  async function updateUser(
+    patch: Partial<Pick<UserRow, 'restrict_devices' | 'notify_on_device_request' | 'auto_block_on_incident'>>
+  ) {
     setError(null);
     const res = await fetch(`/api/admin/users/${userId}`, {
       method: 'PATCH',
@@ -222,6 +227,29 @@ export default function UserDevicesPage() {
     });
     const data = await res.json();
     if (!res.ok) setError(data.error ?? 'Could not update user.');
+    load();
+  }
+
+  async function blockUser() {
+    setError(null);
+    const reason = window.prompt('Block reason (optional):') ?? undefined;
+    const minutesRaw = window.prompt('Block for how many minutes? (default 1440 = 24h)');
+    const minutes = minutesRaw ? Number.parseInt(minutesRaw, 10) : undefined;
+    const res = await fetch(`/api/admin/users/${userId}/block`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason, minutes: Number.isFinite(minutes) && minutes ? minutes : undefined }),
+    });
+    const data = await res.json();
+    if (!res.ok) setError(data.error ?? 'Could not block user.');
+    load();
+  }
+
+  async function unblockUser() {
+    setError(null);
+    const res = await fetch(`/api/admin/users/${userId}/block`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) setError(data.error ?? 'Could not unblock user.');
     load();
   }
 
@@ -291,6 +319,14 @@ export default function UserDevicesPage() {
             {activeCount} active session{activeCount === 1 ? '' : 's'}
           </p>
         )}
+        {!loading && user?.blocked_until && new Date(user.blocked_until).getTime() > Date.now() && (
+          <p
+            className="inline-flex items-center gap-2 rounded-full border border-danger/30 bg-danger/10 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-danger"
+            title={user.block_reason ?? undefined}
+          >
+            Blocked until {new Date(user.blocked_until).toLocaleString()}
+          </p>
+        )}
       </div>
 
       {/* Same restrict_devices/notify_on_device_request columns the
@@ -320,6 +356,30 @@ export default function UserDevicesPage() {
               ? 'New-device alerts: On (click to turn off)'
               : 'New-device alerts: Off (click to turn on)'}
           </button>
+          <button
+            onClick={() => updateUser({ auto_block_on_incident: !user.auto_block_on_incident })}
+            className="rounded-lg border border-vault-border px-3 py-1.5 text-xs text-ink-dim transition hover:border-signal hover:text-signal"
+            title="Whether a detected DevTools/security incident on this account auto-blocks it immediately (see Security Incidents). On by default."
+          >
+            {user.auto_block_on_incident
+              ? 'Auto-block on incident: On (click to turn off)'
+              : 'Auto-block on incident: Off (click to turn on)'}
+          </button>
+          {user.blocked_until && new Date(user.blocked_until).getTime() > Date.now() ? (
+            <button
+              onClick={unblockUser}
+              className="rounded-lg border border-danger/40 px-3 py-1.5 text-xs text-danger transition hover:bg-danger/10"
+            >
+              Unblock now
+            </button>
+          ) : (
+            <button
+              onClick={blockUser}
+              className="rounded-lg border border-danger/40 px-3 py-1.5 text-xs text-danger transition hover:bg-danger/10"
+            >
+              Block temporarily
+            </button>
+          )}
         </div>
       )}
 

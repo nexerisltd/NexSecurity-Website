@@ -84,7 +84,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   if (auth.state === 'UNAUTHENTICATED') {
     return NextResponse.json({ error: 'Access denied.' }, { status: 401 });
   }
-  if (auth.state === 'UNAUTHORIZED' || auth.state === 'DEVICE_BLOCKED') {
+  if (auth.state === 'UNAUTHORIZED' || auth.state === 'DEVICE_BLOCKED' || auth.state === 'TEMP_BLOCKED') {
     return NextResponse.json({ error: 'Access denied.' }, { status: 403 });
   }
 

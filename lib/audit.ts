@@ -24,7 +24,15 @@ export type AuditEventType =
   // page-side heuristic fired" apart from an actual confirmed decision,
   // which only a human reviewer makes (see REVIEW_STATUSES below).
   | 'DEVTOOLS_DETECTED'
-  | 'SUSPICIOUS_SECURITY_EVENT';
+  | 'SUSPICIOUS_SECURITY_EVENT'
+  // Enforcement half of the above (see supabase/migrations/0017_temp_block.sql).
+  // AUTO fires from app/api/security/incident/route.ts the moment an
+  // incident is recorded for an account with auto_block_on_incident on;
+  // the MANUAL/UNBLOCKED pair fire from an admin's own action in
+  // app/api/admin/users/[id]/block/route.ts.
+  | 'USER_AUTO_BLOCKED'
+  | 'USER_MANUALLY_BLOCKED'
+  | 'USER_UNBLOCKED';
 
 /** Only ever set on the two security-incident event types above — every
  * other row's review_status stays null forever (see

@@ -40,6 +40,18 @@ function getMaxSecurityAttempts(): number | null {
  * DEVTOOLS_DETECTED vs the review_status column added in
  * supabase/migrations/0015_security_incidents.sql).
  */
+// How long an auto-block from a single detected incident lasts before it
+// expires on its own (see supabase/migrations/0017_temp_block.sql —
+// blocked_until in the past is the same as not blocked). Configurable per
+// deployment, same reasoning as MAX_SECURITY_ATTEMPTS below: this route
+// has no real policy opinion baked in beyond "block by default", so the
+// actual duration is left to whoever runs this.
+function getAutoBlockMinutes(): number {
+  const raw = process.env.AUTO_BLOCK_MINUTES;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60 * 24; // default: 24h
+}
+
 export async function POST(request: NextRequest) {
   const auth = await requireAuthorized();
   if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
@@ -129,6 +141,49 @@ export async function POST(request: NextRequest) {
   const maxAttempts = getMaxSecurityAttempts();
   const remainingAttempts = maxAttempts !== null ? Math.max(0, maxAttempts - attemptNumber) : null;
 
+  // Enforcement (see supabase/migrations/0017_temp_block.sql). Blocks on
+  // THIS very incident — not waiting for a threshold to be crossed —
+  // because a caught DevTools session already means the leak attempt
+  // happened; per-account auto_block_on_incident (default on, flippable
+  // from the admin's user detail page) is the opt-out for an account an
+  // admin trusts enough not to auto-block, not a retry budget. Skips
+  // entirely for admins (never reachable here anyway — see the early
+  // `{ skip: true }` return above) and for an account already blocked
+  // further out than this would set it (an admin's own longer manual
+  // block should never get shortened by a routine auto-block).
+  let blockedUntil: string | null = null;
+  let blockReason: string | null = null;
+  if (auth.user.auto_block_on_incident) {
+    const candidateUntil = new Date(Date.now() + getAutoBlockMinutes() * 60_000).toISOString();
+    const existingUntil = auth.user.blocked_until;
+    if (!existingUntil || new Date(existingUntil).getTime() < new Date(candidateUntil).getTime()) {
+      blockedUntil = candidateUntil;
+      blockReason = `Automatic: ${parsed.data.detectionType.replace(/_/g, ' ').toLowerCase()} (attempt #${attemptNumber})`;
+
+      const adminClient = createSupabaseAdminClient();
+      const { error: blockError } = await adminClient
+        .from('authorized_users')
+        .update({ blocked_until: blockedUntil, block_reason: blockReason })
+        .eq('id', auth.user.id);
+
+      if (blockError) {
+        console.error('[security] failed to auto-block account', blockError);
+        blockedUntil = null;
+        blockReason = null;
+      } else {
+        await logAuditEvent('USER_AUTO_BLOCKED', auth.user.email, auth.user.id, {
+          incident_id: incidentId,
+          detection_type: parsed.data.detectionType,
+          blocked_until: blockedUntil,
+          attempt_number: attemptNumber,
+        });
+      }
+    } else {
+      blockedUntil = existingUntil;
+      blockReason = auth.user.block_reason;
+    }
+  }
+
   return NextResponse.json({
     nsUserId: auth.user.id,
     accountIdentifier: auth.user.email,
@@ -142,5 +197,7 @@ export async function POST(request: NextRequest) {
     detectionType: parsed.data.detectionType,
     attemptNumber,
     remainingAttempts,
+    blockedUntil,
+    blockReason,
   });
 }

@@ -8,9 +8,11 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 export function LoginCard({
   accessDenied,
   deviceBlocked,
+  tempBlockedUntil,
 }: {
   accessDenied: boolean;
   deviceBlocked?: boolean;
+  tempBlockedUntil?: string | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
@@ -85,6 +87,19 @@ export function LoginCard({
               <p className="mt-1 text-xs text-ink-dim">
                 This account only works from approved devices. Ask your administrator to
                 approve this device, or sign in from an approved one.
+              </p>
+            </div>
+          )}
+
+          {tempBlockedUntil && (
+            <div className="mb-5 rounded-xl border border-danger/25 bg-danger/5 px-4 py-3 text-left backdrop-blur-sm">
+              <p className="font-mono text-[11px] uppercase tracking-widest text-danger">
+                Account temporarily blocked
+              </p>
+              <p className="mt-1 text-xs text-ink-dim">
+                This account is temporarily blocked until{' '}
+                {new Date(tempBlockedUntil).toLocaleString()}. If you believe this is a mistake,
+                contact your administrator — they can lift the block early.
               </p>
             </div>
           )}

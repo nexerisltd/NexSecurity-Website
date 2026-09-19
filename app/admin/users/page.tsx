@@ -18,6 +18,7 @@ type AuthorizedUser = {
   trial_duration_minutes: number | null;
   trial_started_at: string | null;
   trial_expires_at: string | null;
+  blocked_until: string | null;
   created_at: string;
 };
 
@@ -357,6 +358,11 @@ export default function AdminUsersPage() {
                     {u.account_type === 'trial' && (
                       <span className="ml-2 rounded-full border border-warn/30 bg-warn/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-warn">
                         {describeTrial(u)}
+                      </span>
+                    )}
+                    {u.blocked_until && new Date(u.blocked_until).getTime() > Date.now() && (
+                      <span className="ml-2 rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-danger">
+                        Blocked
                       </span>
                     )}
                   </td>

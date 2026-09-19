@@ -15,6 +15,9 @@ export type AuthorizedUser = {
   trial_duration_minutes: number | null;
   trial_started_at: string | null;
   trial_expires_at: string | null;
+  auto_block_on_incident: boolean;
+  blocked_until: string | null;
+  block_reason: string | null;
 };
 
 export type DeviceStatus = 'pending' | 'authorized' | 'restricted' | 'blocked';
@@ -24,6 +27,12 @@ export type GoogleProfile = { avatarUrl: string | null; fullName: string | null 
 export type AuthResult =
   | { state: 'UNAUTHENTICATED' }
   | { state: 'UNAUTHORIZED'; email: string }
+  // Distinct from UNAUTHORIZED/DISABLED on purpose — see
+  // supabase/migrations/0017_temp_block.sql. blockedUntil is always in
+  // the future when this state is returned (a past/null blocked_until
+  // is treated as "not blocked" by getAuth() below, so callers never
+  // have to re-check the timestamp themselves).
+  | { state: 'TEMP_BLOCKED'; email: string; blockedUntil: string; reason: string | null }
   | {
       state: 'DEVICE_BLOCKED';
       email: string;
@@ -205,12 +214,32 @@ export async function getAuth(): Promise<AuthResult> {
 
   const { data: authorizedUser } = await supabase
     .from('authorized_users')
-    .select('id, email, role, status, restrict_devices, notify_on_device_request, account_type, trial_duration_minutes, trial_started_at, trial_expires_at')
+    .select('id, email, role, status, restrict_devices, notify_on_device_request, account_type, trial_duration_minutes, trial_started_at, trial_expires_at, auto_block_on_incident, blocked_until, block_reason')
     .eq('email', user.email.toLowerCase())
     .maybeSingle();
 
   if (!authorizedUser || authorizedUser.status !== 'ACTIVE') {
     return { state: 'UNAUTHORIZED', email: user.email };
+  }
+
+  // Temp block (auto, from a security incident, or manual, from an
+  // admin — see supabase/migrations/0017_temp_block.sql) gates access
+  // the same way DEVICE_BLOCKED does, checked before anything else so a
+  // blocked account can't slip through via any of the paths below it.
+  // Admins are never blocked by this — same trusted-role carve-out as
+  // isRestricted below and the DevTools detector itself (see
+  // components/DevToolsGuard.tsx / app/api/security/incident/route.ts).
+  if (
+    authorizedUser.role !== 'ADMIN' &&
+    authorizedUser.blocked_until &&
+    new Date(authorizedUser.blocked_until as string).getTime() > Date.now()
+  ) {
+    return {
+      state: 'TEMP_BLOCKED',
+      email: user.email,
+      blockedUntil: authorizedUser.blocked_until as string,
+      reason: (authorizedUser.block_reason as string | null) ?? null,
+    };
   }
 
   // Free Trial expiry — checked on every request rather than a background
@@ -292,6 +321,7 @@ export async function requireAuthorized(): Promise<
   if (auth.state === 'UNAUTHENTICATED') return { ok: false, status: 401 };
   if (auth.state === 'UNAUTHORIZED') return { ok: false, status: 403 };
   if (auth.state === 'DEVICE_BLOCKED') return { ok: false, status: 403 };
+  if (auth.state === 'TEMP_BLOCKED') return { ok: false, status: 403 };
   return { ok: true, user: auth.user };
 }
 
@@ -317,6 +347,7 @@ export async function requireDeviceIdentity(): Promise<
   const auth = await getAuth();
   if (auth.state === 'UNAUTHENTICATED') return { ok: false, status: 401 };
   if (auth.state === 'UNAUTHORIZED') return { ok: false, status: 403 };
+  if (auth.state === 'TEMP_BLOCKED') return { ok: false, status: 403 };
   if (auth.state === 'DEVICE_BLOCKED') {
     if (!auth.deviceId) return { ok: false, status: 409 };
     return { ok: true, userId: auth.userId, deviceId: auth.deviceId };

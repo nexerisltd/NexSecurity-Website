@@ -30,6 +30,20 @@ export const updateAuthorizedUserSchema = z.object({
   status: statusSchema.optional(),
   restrict_devices: z.boolean().optional(),
   notify_on_device_request: z.boolean().optional(),
+  // Per-account opt-out of the auto-block-on-security-incident behavior
+  // (see supabase/migrations/0017_temp_block.sql and
+  // app/api/security/incident/route.ts). Default true; an admin flips
+  // this off from the user detail page for an account they trust not to
+  // auto-block.
+  auto_block_on_incident: z.boolean().optional(),
+});
+
+// Manual temporary block (app/api/admin/users/[id]/block/route.ts). A
+// missing/omitted minutes value uses that route's own default rather
+// than requiring the admin UI to always send one.
+export const blockUserSchema = z.object({
+  minutes: z.number().int().positive().max(60 * 24 * 365).optional(),
+  reason: z.string().trim().max(500).optional(),
 });
 
 // 'pending' is set by the system when a device is first seen — never a

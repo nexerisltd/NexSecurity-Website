@@ -11,6 +11,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (auth.state === 'UNAUTHENTICATED') redirect('/login');
   if (auth.state === 'UNAUTHORIZED') redirect('/login?error=access_denied');
   if (auth.state === 'DEVICE_BLOCKED') redirect('/login?error=device_blocked');
+  if (auth.state === 'TEMP_BLOCKED') redirect(`/login?error=temp_blocked&until=${encodeURIComponent(auth.blockedUntil)}`);
   // This is the actual gate — being an authorized USER is not enough.
   // Every admin page and every /api/admin/* route re-checks this
   // independently; nothing here is inherited or cached client-side.

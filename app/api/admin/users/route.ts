@@ -14,7 +14,7 @@ export async function GET() {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from('authorized_users')
-    .select('id, email, name, role, status, restrict_devices, notify_on_device_request, account_type, trial_duration_minutes, trial_started_at, trial_expires_at, created_at, updated_at')
+    .select('id, email, name, role, status, restrict_devices, notify_on_device_request, account_type, trial_duration_minutes, trial_started_at, trial_expires_at, auto_block_on_incident, blocked_until, block_reason, created_at, updated_at')
     .order('created_at', { ascending: false });
 
   if (error) return NextResponse.json({ error: 'Something went wrong.' }, { status: 500 });

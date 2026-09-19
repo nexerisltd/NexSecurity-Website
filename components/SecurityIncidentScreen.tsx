@@ -13,6 +13,8 @@ export type SecurityIncidentInfo = {
   detectionType: string;
   attemptNumber: number;
   remainingAttempts: number | null;
+  blockedUntil?: string | null;
+  blockReason?: string | null;
 };
 
 const CONTACT_EMAIL = 'mr.arx.me@gmail.com';
@@ -75,6 +77,17 @@ export function SecurityIncidentScreen({ incident }: { incident: SecurityInciden
           account may be permanently banned or blacklisted in accordance with NexSecurity&apos;s terms and applicable
           policy. Refund eligibility may also be affected where applicable.
         </p>
+
+        {incident.blockedUntil && (
+          <div className="mt-4 rounded-xl border border-danger/25 bg-danger/5 px-4 py-3">
+            <p className="font-mono text-[11px] uppercase tracking-widest text-danger">Account temporarily blocked</p>
+            <p className="mt-1 text-xs text-ink-dim">
+              This account is blocked until {new Date(incident.blockedUntil).toLocaleString()}
+              {incident.blockReason ? ` — ${incident.blockReason}.` : '.'} Signing out and back in will not lift
+              this early; contact your administrator if you believe this was a mistake.
+            </p>
+          </div>
+        )}
 
         <div className="mt-6 rounded-xl border border-vault-border bg-vault-900/60 px-4 py-1 sm:px-5">
           <Row label="NS User" value={incident.nsUserId} />

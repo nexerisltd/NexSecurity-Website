@@ -5,7 +5,7 @@ import { LoginCard } from '@/components/LoginCard';
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: { error?: string };
+  searchParams: { error?: string; until?: string };
 }) {
   const auth = await getAuth();
   if (auth.state === 'AUTHORIZED') {
@@ -17,6 +17,7 @@ export default async function LoginPage({
       <LoginCard
         accessDenied={searchParams.error === 'access_denied'}
         deviceBlocked={searchParams.error === 'device_blocked'}
+        tempBlockedUntil={searchParams.error === 'temp_blocked' ? searchParams.until ?? null : null}
       />
     </div>
   );
