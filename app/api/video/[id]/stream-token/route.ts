@@ -6,9 +6,31 @@ import { checkRateLimit } from '@/lib/rateLimit';
 import { logAuditEvent } from '@/lib/audit';
 import { canAccessBoard } from '@/lib/boardAccess';
 import { createStreamToken, hashForToken } from '@/lib/streamToken';
-import { getClientIp } from '@/lib/requestInfo';
+import { getClientIp, getDeviceId } from '@/lib/requestInfo';
 
 export const dynamic = 'force-dynamic';
+
+// How many of an account's own devices may be actively streaming AT THE
+// SAME TIME (not "how many devices are approved to sign in" — that's
+// restrict_devices/user_devices, an entirely separate, indefinite
+// admin decision). Default 2 (phone + laptop is the common legitimate
+// pattern) — configurable since what's "normal" varies by deployment
+// (a household plan vs. a strict single-seat one). See
+// active_stream_sessions below for how "actively streaming" is tracked.
+function getConcurrentSessionLimit(): number {
+  const raw = process.env.CONCURRENT_STREAM_LIMIT;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 2;
+}
+
+// How long a device counts as "still actively streaming" after its last
+// token refresh before it's considered to have stopped and its slot
+// freed up. Must comfortably exceed STREAM_TOKEN_REFRESH_MS
+// (components/VideoPlayer.tsx, ~10s) so a normal refresh cycle never
+// looks like the device went idle; short enough that closing a tab or
+// losing connection frees the slot again within tens of seconds, not
+// minutes.
+const ACTIVE_SESSION_WINDOW_SECONDS = 30;
 
 // Short enough that a leaked/copied `t=` value (devtools Network tab,
 // browser history, a shared screen) is worthless within seconds; long
@@ -73,6 +95,59 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   if (!(await canAccessBoard(adminClient, auth.user.email, board.id, auth.user.role === 'ADMIN'))) {
     await logAuditEvent('VIDEO_ACCESS_DENIED', auth.user.email, videoId, { reason: 'board_restricted' });
     return NextResponse.json({ error: 'Access denied.' }, { status: 404 });
+  }
+
+  // Concurrent session cap (see active_stream_sessions in
+  // supabase/migrations/0018_active_stream_sessions.sql and
+  // getConcurrentSessionLimit() above). Admins exempt — same trusted-role
+  // carve-out as isRestricted/DevToolsGuard elsewhere in this codebase;
+  // an admin legitimately opens the same class from several devices
+  // while reviewing content.
+  //
+  // Checked BEFORE upserting this device's own row — existing active
+  // devices keep their slot; only a NEW device trying to join beyond the
+  // cap gets turned away, so this never silently kicks a session that
+  // was already playing. (A soft, DB-backed limit, not a hard atomic
+  // one — two devices requesting a token in the same instant could both
+  // slip through before either's upsert lands. Acceptable for what this
+  // is: a deterrent against casual "share my login with 5 friends"
+  // account sharing, not a security boundary the way the IP-bound token
+  // itself is.)
+  const deviceId = getDeviceId();
+  if (auth.user.role !== 'ADMIN' && deviceId) {
+    const limit = getConcurrentSessionLimit();
+    const windowStart = new Date(Date.now() - ACTIVE_SESSION_WINDOW_SECONDS * 1000).toISOString();
+    const { data: activeRows } = await adminClient
+      .from('active_stream_sessions')
+      .select('device_id')
+      .eq('user_id', auth.user.id)
+      .gte('last_seen_at', windowStart);
+
+    const activeDeviceIds = new Set((activeRows ?? []).map((r) => r.device_id as string));
+    if (!activeDeviceIds.has(deviceId) && activeDeviceIds.size >= limit) {
+      await logAuditEvent('CONCURRENT_SESSION_LIMIT_HIT', auth.user.email, auth.user.id, {
+        device_id: deviceId,
+        video_id: videoId,
+        active_device_count: activeDeviceIds.size,
+        limit,
+      });
+      return NextResponse.json(
+        { error: 'This account already has the maximum number of devices streaming at once.', code: 'CONCURRENT_SESSION_LIMIT' },
+        { status: 409 }
+      );
+    }
+
+    // Claims/refreshes this device's slot. Fire-and-forget-ish (still
+    // awaited, but a failure here shouldn't block playback — see catch
+    // below) since this is bookkeeping for the NEXT request's check, not
+    // something this request itself depends on.
+    const { error: upsertError } = await adminClient
+      .from('active_stream_sessions')
+      .upsert(
+        { user_id: auth.user.id, device_id: deviceId, video_id: videoId, last_seen_at: new Date().toISOString() },
+        { onConflict: 'user_id,device_id' }
+      );
+    if (upsertError) console.error('[stream-token] failed to record active session', upsertError);
   }
 
   // Never the user's raw email — the Worker only uses this for its own

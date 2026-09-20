@@ -318,6 +318,7 @@ export function VideoPlayer({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!initialUrl);
   const [revoked, setRevoked] = useState(false);
+  const [revokedReason, setRevokedReason] = useState<{ title: string; message: string } | null>(null);
   const [playerJsReady, setPlayerJsReady] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const isBunny = provider === 'bunny';
@@ -575,14 +576,14 @@ export function VideoPlayer({
   // every segment, so a null return here means the same real things a
   // failed heartbeat means (revoked device, disabled account, board
   // access pulled), not just "network blip".
-  const fetchStreamToken = useCallback(async (): Promise<string | null> => {
+  const fetchStreamToken = useCallback(async (): Promise<{ token: string | null; code?: string }> => {
     try {
       const res = await fetch(`/api/video/${videoId}/stream-token`, { method: 'POST' });
-      if (!res.ok) return null;
-      const data = await res.json();
-      return typeof data.token === 'string' ? data.token : null;
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { token: null, code: typeof data.code === 'string' ? data.code : undefined };
+      return { token: typeof data.token === 'string' ? data.token : null };
     } catch {
-      return null;
+      return { token: null };
     }
   }, [videoId]);
 
@@ -621,9 +622,15 @@ export function VideoPlayer({
           // right before minting a token (see that route). Two checks
           // in a row on first load is a deliberate, cheap trade for
           // never putting a stale/unauthorized Worker URL into `url`.
-          const token = await fetchStreamToken();
+          const { token, code } = await fetchStreamToken();
           if (cancelled) return;
-          if (!token) throw new Error('Playback unavailable.');
+          if (!token) {
+            throw new Error(
+              code === 'CONCURRENT_SESSION_LIMIT'
+                ? 'This account already has the maximum number of devices streaming at once. Close the class on another device and reload.'
+                : 'Playback unavailable.'
+            );
+          }
           streamTokenRef.current = token;
           setUrl(buildStreamWorkerUrl(videoId, token));
         } else {
@@ -679,11 +686,20 @@ export function VideoPlayer({
   useEffect(() => {
     if (provider !== 'm3u8' || !url) return;
     return jitteredInterval(async () => {
-      const token = await fetchStreamToken();
+      const { token, code } = await fetchStreamToken();
       if (token) {
         streamTokenRef.current = token;
         return;
       }
+      setRevokedReason(
+        code === 'CONCURRENT_SESSION_LIMIT'
+          ? {
+              title: 'Too many devices',
+              message:
+                'This account already has the maximum number of devices streaming at once. Close the class on another device and reload here.',
+            }
+          : null
+      );
       setRevoked(true);
       setUrl(null);
       streamTokenRef.current = null;
@@ -1662,8 +1678,11 @@ export function VideoPlayer({
 
       {revoked && !loading && (
         <PlayerProblemToast
-          title="Access revoked"
-          message="This session is no longer authorized to play this class. Reload the page if you believe this is a mistake."
+          title={revokedReason?.title ?? 'Access revoked'}
+          message={
+            revokedReason?.message ??
+            'This session is no longer authorized to play this class. Reload the page if you believe this is a mistake.'
+          }
           fixLabel="Refresh page"
         />
       )}

@@ -196,3 +196,29 @@ select option {
 .no-scrollbar::-webkit-scrollbar {
   display: none; /* Chrome/Safari/new Edge */
 }
+
+/* Mobile long-press protection — applied to .protected-content, the
+   wrapper around everything under /learn (see app/learn/layout.tsx).
+   Pairs with components/DisableRightClick.tsx's contextmenu prevention,
+   which covers Android (Chrome for Android fires a real `contextmenu`
+   event on long-press, so that JS-side preventDefault already handles
+   it there). iOS Safari's long-press "Save Image"/"Copy" menu on
+   <img>/<video> is a NATIVE OS-level menu that is NOT gated by the
+   contextmenu event at all — -webkit-touch-callout is the only thing
+   that suppresses it, which is why this needs to be CSS, not JS.
+   user-select is included alongside it for the same touch-and-hold
+   gesture, on text/thumbnails.
+   HONEST LIMIT, same as everywhere else in this codebase: this stops
+   the OS's native save-image/copy menu from appearing at all — it does
+   not, and cannot, prevent a screenshot or screen recording (out of
+   scope, per this feature's own requirement), and it does nothing
+   against a video actually finishing its normal HTTP delivery, which is
+   what the IP-bound stream token (lib/streamToken.ts / worker/src/
+   index.ts) is for. */
+.protected-content img,
+.protected-content video {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+

@@ -32,7 +32,15 @@ export type AuditEventType =
   // app/api/admin/users/[id]/block/route.ts.
   | 'USER_AUTO_BLOCKED'
   | 'USER_MANUALLY_BLOCKED'
-  | 'USER_UNBLOCKED';
+  | 'USER_UNBLOCKED'
+  // A device was turned away by the concurrent-stream cap (see
+  // getConcurrentSessionLimit() in app/api/video/[id]/stream-token/
+  // route.ts) — informational, NOT part of the
+  // DEVTOOLS_DETECTED/SUSPICIOUS_SECURITY_EVENT review queue or the
+  // auto-block pipeline those feed: a student's 3rd device is far more
+  // often "forgot laptop was still open" than actual account sharing,
+  // so this doesn't get treated as an incident by itself.
+  | 'CONCURRENT_SESSION_LIMIT_HIT';
 
 /** Only ever set on the two security-incident event types above — every
  * other row's review_status stays null forever (see
