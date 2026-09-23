@@ -11,6 +11,7 @@ type PendingRequest = {
   ip_address: string;
   device_label: string;
   first_seen: string;
+  status: string;
   user_id: string | null;
   user_email: string;
 };
@@ -112,6 +113,11 @@ export default function AdminRequestsPage() {
                 )}
                 <p className="mt-0.5 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
                   {req.device_label} · {req.ip_address} · requested {relativeTime(req.first_seen)}
+                  {req.status === 'restricted' && (
+                    <span className="ml-2 rounded-full border border-warn/30 bg-warn/10 px-1.5 py-0.5 text-warn">
+                      Previously restricted
+                    </span>
+                  )}
                 </p>
               </div>
               <div className="flex shrink-0 gap-2">

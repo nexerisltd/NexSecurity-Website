@@ -749,9 +749,9 @@ export default function AdminVideosPage() {
                   key={`${r.title}-${index}`}
                   className="flex items-center justify-between rounded-md border border-vault-border bg-vault-900 px-3 py-2 text-sm backdrop-blur-xl shadow-glass"
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <span className="text-ink">{r.title}</span>
-                    <span className="ml-2 truncate font-mono text-[10px] text-ink-faint">{r.url}</span>
+                    <span className="ml-2 block truncate font-mono text-[10px] text-ink-faint sm:inline">{r.url}</span>
                   </div>
                   <button
                     type="button"
@@ -787,13 +787,13 @@ export default function AdminVideosPage() {
                 ))}
               </div>
             </div>
-            <div className="min-w-[240px] flex-1">
+            <div className="w-full min-w-0 sm:w-auto sm:min-w-[240px] sm:flex-1">
               <span className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">Link (https)</span>
               <input
                 value={pendingResourceUrl}
                 onChange={(e) => setPendingResourceUrl(e.target.value)}
                 placeholder="https://…"
-                className="input mt-1"
+                className="input mt-1 min-w-0"
               />
             </div>
             <button
@@ -1205,9 +1205,9 @@ function VideoEditPanel({
                 key={r.id}
                 className="flex items-center justify-between rounded-md border border-vault-border bg-vault-900 px-3 py-2 text-sm backdrop-blur-xl shadow-glass"
               >
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <span className="text-ink">{r.title}</span>
-                  <span className="ml-2 truncate font-mono text-[10px] text-ink-faint">{r.url}</span>
+                  <span className="ml-2 block truncate font-mono text-[10px] text-ink-faint sm:inline">{r.url}</span>
                 </div>
                 <button
                   onClick={() => removeResource(r.id)}
@@ -1244,7 +1244,7 @@ function VideoEditPanel({
               ))}
             </div>
           </div>
-          <div className="min-w-[240px] flex-1">
+          <div className="w-full min-w-0 sm:w-auto sm:min-w-[240px] sm:flex-1">
             <span className="font-mono text-[10px] uppercase tracking-widest text-ink-faint">
               Link (https)
             </span>
@@ -1252,7 +1252,7 @@ function VideoEditPanel({
               value={resourceUrl}
               onChange={(e) => setResourceUrl(e.target.value)}
               placeholder="https://…"
-              className="input mt-1"
+              className="input mt-1 min-w-0"
             />
           </div>
           <button

@@ -307,8 +307,78 @@ export default function AdminUsersPage() {
         <SearchInput value={search} onChange={setSearch} placeholder="Search by name or email…" className="mt-4 max-w-sm" />
       )}
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-vault-border">
-        <table className="w-full text-left text-sm">
+      {/* Mobile (< md): stacked cards — the 4-column table below becomes
+          unreadable/clipped on a phone-width screen no matter how the
+          columns are sized, so this is a genuinely different layout, not
+          just the same table with a scrollbar bolted on. */}
+      <div className="mt-6 space-y-2 md:hidden">
+        {loading ? (
+          <p className="rounded-xl border border-vault-border bg-vault-900/50 px-4 py-6 text-center text-sm text-ink-faint">
+            Loading…
+          </p>
+        ) : users.length === 0 ? (
+          <p className="rounded-xl border border-vault-border bg-vault-900/50 px-4 py-6 text-center text-sm text-ink-faint">
+            No authorized users yet.
+          </p>
+        ) : filteredUsers.length === 0 ? (
+          <p className="rounded-xl border border-vault-border bg-vault-900/50 px-4 py-6 text-center text-sm text-ink-faint">
+            No users match &ldquo;{search}&rdquo;.
+          </p>
+        ) : (
+          filteredUsers.map((u) => (
+            <div key={u.id} className="rounded-xl border border-vault-border bg-vault-900/50 p-4">
+              <div className="min-w-0">
+                <p className="truncate text-ink">{displayName(u)}</p>
+                {u.name && <p className="mt-0.5 truncate font-mono text-[10px] text-ink-faint">{u.email}</p>}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-ink-dim">{u.role}</span>
+                <span className="text-ink-faint">·</span>
+                <span className={`font-mono text-[10px] uppercase tracking-widest ${u.status === 'ACTIVE' ? 'text-ok' : 'text-danger'}`}>
+                  {u.status}
+                </span>
+                {u.restrict_devices && (
+                  <span className="rounded-full border border-signal/30 bg-signal/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-signal">
+                    Restricted
+                  </span>
+                )}
+                {u.account_type === 'trial' && (
+                  <span className="rounded-full border border-warn/30 bg-warn/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-warn">
+                    {describeTrial(u)}
+                  </span>
+                )}
+                {u.blocked_until && new Date(u.blocked_until).getTime() > Date.now() && (
+                  <span className="rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-danger">
+                    Blocked
+                  </span>
+                )}
+              </div>
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => setEditingId(u.id)}
+                  className="flex-1 rounded-md border border-vault-border px-2.5 py-1.5 text-xs text-ink-dim transition hover:border-signal hover:text-ink"
+                >
+                  Edit
+                </button>
+                <button
+                  disabled={busyId === u.id}
+                  onClick={() => removeUser(u.id)}
+                  className="flex-1 rounded-md border border-danger/30 px-2.5 py-1.5 text-xs text-danger transition hover:bg-danger/10 disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* md and up: the original table. overflow-x-auto (not
+          overflow-hidden) kept as a safety net — a very long email or
+          long-form status combination still scrolls into view instead
+          of silently clipping, even at desktop widths. */}
+      <div className="mt-6 hidden overflow-x-auto rounded-xl border border-vault-border md:block">
+        <table className="w-full min-w-[640px] text-left text-sm">
           <thead className="bg-vault-900 font-mono text-[10px] uppercase tracking-widest text-ink-faint">
             <tr>
               <th className="px-4 py-3">User</th>

@@ -32,8 +32,16 @@ export async function GET() {
 
   const { data, error } = await adminClient
     .from('user_devices')
-    .select('id, device_id, ip_address, device_label, first_seen, user:user_id(id, email)')
-    .eq('status', 'pending')
+    .select('id, device_id, ip_address, device_label, first_seen, status, user:user_id(id, email)')
+    // Includes 'restricted' alongside 'pending' — a device that ended up
+    // restricted (e.g. an earlier decision, or a device that predates
+    // restrict_devices being turned on for that account) still needs an
+    // admin's attention the same way a brand-new pending one does, and
+    // this is the ONLY list most admins actually check day to day. Never
+    // 'blocked' — that status means an admin already looked at this
+    // device and explicitly denied it; it shouldn't keep resurfacing
+    // here as if it were still waiting on a decision.
+    .in('status', ['pending', 'restricted'])
     .order('first_seen', { ascending: false })
     .limit(MAX_RESULTS);
 
@@ -47,6 +55,7 @@ export async function GET() {
       ip_address: row.ip_address as string,
       device_label: row.device_label as string,
       first_seen: row.first_seen as string,
+      status: row.status as string,
       user_id: user?.id ?? null,
       user_email: user?.email ?? 'Unknown user',
     };
