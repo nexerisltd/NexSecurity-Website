@@ -56,9 +56,65 @@ async function deriveKey(secret: string): Promise<CryptoKey> {
   if (cachedKey && cachedKey.secret === secret) return cachedKey.key;
   const secretBytes = new TextEncoder().encode(secret);
   const digest = await crypto.subtle.digest('SHA-256', secretBytes);
-  const key = await crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['decrypt']);
+  const key = await crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
   cachedKey = { secret, key };
   return key;
+}
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Encrypts a sub-resource URL (a variant playlist or segment URI a
+ * playlist referenced) for the `u=` query param — see rewritePlaylist in
+ * ./m3u8.ts, which is the only caller. This used to be encodeProxyTarget
+ * in ./m3u8.ts, plain reversible base64 with NO encryption at all: the
+ * real upstream CDN URL (Bunny's own .b-cdn.net address) sat in every
+ * `u=` value in cleartext, one `atob()` away from anyone who looked —
+ * completely bypassing the IP-binding/short-TTL/burst-detection this
+ * whole token system exists for, since a copied `u=` value handed you
+ * the raw CDN URL directly, usable forever, with none of this Worker's
+ * checks ever running again. AES-256-GCM with the SAME
+ * STREAM_TOKEN_SECRET as the `t=` token closes that: `u=` is now exactly
+ * as opaque as `t=` is, and always was meant to be.
+ */
+export async function encryptProxyTarget(url: string, secret: string): Promise<string> {
+  const key = await deriveKey(secret);
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+  const plaintext = new TextEncoder().encode(url);
+  // Web Crypto's AES-GCM encrypt() appends the auth tag to the
+  // ciphertext itself (unlike Node's createCipheriv/getAuthTag, which
+  // hand it back separately) — so the output here is already
+  // ciphertext||tag, and only the IV needs prepending to match the
+  // iv||ciphertext||tag layout decryptProxyTarget (and
+  // decryptStreamToken above) expect.
+  const cipherWithTag = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext));
+  const combined = new Uint8Array(IV_LENGTH + cipherWithTag.length);
+  combined.set(iv, 0);
+  combined.set(cipherWithTag, IV_LENGTH);
+  return bytesToBase64Url(combined);
+}
+
+/** Decrypts a `u=` value produced by encryptProxyTarget above. Returns
+ * null for anything malformed, tampered, or encrypted under a different
+ * secret — same collapse-every-failure-to-null shape as
+ * decryptStreamToken, for the same reason (see that function). */
+export async function decryptProxyTarget(token: string, secret: string): Promise<string | null> {
+  try {
+    const raw = base64UrlToBytes(token);
+    if (raw.length <= IV_LENGTH) return null;
+    const iv = raw.slice(0, IV_LENGTH);
+    const cipherWithTag = raw.slice(IV_LENGTH);
+    const key = await deriveKey(secret);
+    const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipherWithTag);
+    const decoded = new TextDecoder().decode(plainBuf);
+    return decoded || null;
+  } catch {
+    return null;
+  }
 }
 
 /**

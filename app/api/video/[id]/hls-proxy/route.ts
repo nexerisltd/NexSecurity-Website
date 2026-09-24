@@ -101,7 +101,41 @@ async function requireAuthorizedCached(request: NextRequest) {
  *     (or a variant) playlist referenced — rewritten to this shape by
  *     rewritePlaylist() below, never constructed by the client itself.
  */
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+/**
+ * DISABLED — this route used to be the m3u8 playback path before the
+ * Cloudflare Worker offload (worker/src/index.ts), and was left in
+ * place afterward as dead-code reference on the assumption that nothing
+ * in this app links to it anymore. That assumption was WRONG in the way
+ * that actually matters: "nothing in THIS APP links to it" only means
+ * the frontend never constructs this URL — it says nothing about
+ * whether the route itself still runs, and it did. A valid session
+ * cookie was the ONLY thing this route ever checked; it has none of the
+ * IP-binding (lib/streamToken.ts's `ip` field), short TTL, or
+ * burst-detection the Worker path enforces on every single request. Any
+ * authorized account's own active session could hit
+ * `/api/video/[id]/hls-proxy` directly — no signed token, no expiry
+ * beyond the session itself — and get an unthrottled, unbound proxy
+ * stream for any video whose id it knew. That gap is what this whole
+ * feature's worth of hardening (concurrent-session caps, IP binding,
+ * auto-block) was built to close on the Worker path, and none of it
+ * applied here because this route predates all of it and was never
+ * updated or removed.
+ *
+ * Kept as a file (not deleted outright) so the parsing/rewriting logic
+ * above stays available for reference — but the route itself now refuses
+ * every request. If this ever needs to come back for a real reason, it
+ * MUST be rebuilt on the same token/IP-binding model as
+ * worker/src/index.ts, never re-enabled as-is.
+ */
+export async function GET() {
+  return NextResponse.json(
+    { error: 'This endpoint has been retired. Playback now goes through the Worker-based stream token system.' },
+    { status: 410 }
+  );
+}
+
+/* eslint-disable @typescript-eslint/no-unused-vars -- kept for reference, see the doc comment above */
+async function _legacyHlsProxyGET(request: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuthorizedCached(request);
   if (!auth.ok) return NextResponse.json({ error: 'Access denied.' }, { status: auth.status });
 

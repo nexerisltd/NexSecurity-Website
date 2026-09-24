@@ -1,15 +1,18 @@
 /**
  * Ported near-verbatim from ../../lib/m3u8.ts (Next.js app) — same
  * isSafeProxyTarget SSRF guard, same m3u8FetchHeaders spoofing, same
- * playlist rewriting. encodeProxyTarget/decodeProxyTarget use Web
- * Crypto-adjacent base64url helpers instead of Node's Buffer — the
- * original used Buffer since Next.js runs on Node, but pulling in
- * @types/node here just to keep one `Buffer.from(...).toString(...)`
- * call wasn't worth it when atob/btoa do the exact same job natively in
- * a Worker. rewritePlaylist also gained an `extraQuery` param (see its
- * own comment below). Keep this in sync with lib/m3u8.ts if that file's
- * SSRF guard or header spoofing ever changes.
+ * playlist rewriting. Diverges from that file in one important way:
+ * `u=` (the encoded upstream URL for a rewritten sub-resource) is now
+ * AES-256-GCM encrypted (see encryptProxyTarget/decryptProxyTarget in
+ * ./streamToken.ts) instead of plain reversible base64 — see
+ * rewritePlaylist's own comment below for why. lib/m3u8.ts's version
+ * stays plain base64 since it only ever backed the now-retired
+ * app/api/video/[id]/hls-proxy/route.ts (see that file), which never
+ * had this Worker's IP-binding to begin with; there's nothing left
+ * calling it, so it wasn't worth touching to match.
  */
+
+import { encryptProxyTarget, decryptProxyTarget } from './streamToken';
 
 const PLAYLIST_HEADER_RE = /^#EXTM3U/;
 
@@ -59,58 +62,58 @@ export function isSafeProxyTarget(url: string): boolean {
   }
 }
 
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function base64UrlDecode(input: string): Uint8Array {
-  const padded = input.replace(/-/g, '+').replace(/_/g, '/');
-  const pad = padded.length % 4 === 0 ? '' : '='.repeat(4 - (padded.length % 4));
-  const binary = atob(padded + pad);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-export function encodeProxyTarget(url: string): string {
-  return base64UrlEncode(new TextEncoder().encode(url));
-}
-
-export function decodeProxyTarget(token: string): string | null {
-  try {
-    const decoded = new TextDecoder().decode(base64UrlDecode(token));
-    return decoded || null;
-  } catch {
-    return null;
-  }
-}
+/** Thin re-exports so index.ts only needs to import from one place for
+ * everything playlist-related; the actual crypto lives in
+ * ./streamToken.ts since it shares the deriveKey/IV machinery the `t=`
+ * token itself already uses. */
+export { decryptProxyTarget };
 
 /**
- * Same rewriting logic as lib/m3u8.ts's rewritePlaylist, plus one
- * addition: `extraQuery` gets appended to every rewritten sub-resource
- * URL. The Next.js version never needed this — its proxy route sat
- * behind the same session cookie for every request. This Worker instead
- * authenticates each request via the `t=` stream token in the query
- * string (see index.ts), so every rewritten segment/key/variant URL
- * needs one riding along too, or it'd 401 the instant hls.js requested
- * it. `proxyBase` is e.g. "/hls/<videoId>"; `extraQuery` is e.g.
- * "t=<token>".
+ * Same rewriting logic as lib/m3u8.ts's rewritePlaylist, with two
+ * changes: an `extraQuery` param (the Next.js version never needed
+ * this — its proxy route sat behind the same session cookie for every
+ * request; this Worker instead authenticates each request via the `t=`
+ * stream token in the query string, see index.ts, so every rewritten
+ * segment/key/variant URL needs one riding along too), and `u=` is now
+ * ENCRYPTED, not just encoded.
+ *
+ * That second change is the actual security fix here: `u=` used to be
+ * plain, reversible base64 of the real upstream CDN URL — one `atob()`
+ * away from anyone who copied a rewritten link, handing them Bunny's raw
+ * .b-cdn.net address directly, usable forever with none of this
+ * Worker's checks ever running again (see encryptProxyTarget's own
+ * comment in ./streamToken.ts for how this surfaced). `u=` is now
+ * AES-256-GCM encrypted with the same STREAM_TOKEN_SECRET as `t=`, so it
+ * carries no more information to an outside observer than `t=` already
+ * did. Requires `secret` and is now async (Web Crypto's AES-GCM has no
+ * synchronous API) — `proxyBase` is e.g. "/hls/<videoId>"; `extraQuery`
+ * is e.g. "t=<token>".
  */
-export function rewritePlaylist(text: string, baseUrl: string, proxyBase: string, extraQuery: string): string {
-  const proxied = (uri: string) =>
-    `${proxyBase}?u=${encodeProxyTarget(new URL(uri, baseUrl).toString())}&${extraQuery}`;
+export async function rewritePlaylist(
+  text: string,
+  baseUrl: string,
+  proxyBase: string,
+  extraQuery: string,
+  secret: string
+): Promise<string> {
+  async function proxied(uri: string): Promise<string> {
+    const target = new URL(uri, baseUrl).toString();
+    const encrypted = await encryptProxyTarget(target, secret);
+    return `${proxyBase}?u=${encrypted}&${extraQuery}`;
+  }
 
-  return text
-    .split('\n')
-    .map((rawLine) => {
-      const line = rawLine.replace(/\r$/, '');
+  const lines = text.split('\n').map((rawLine) => rawLine.replace(/\r$/, ''));
+  const rewrittenLines = await Promise.all(
+    lines.map(async (line) => {
       if (line.startsWith('#EXT-X-KEY') || line.startsWith('#EXT-X-MAP')) {
-        return line.replace(/URI="([^"]+)"/, (_m, uri: string) => `URI="${proxied(uri)}"`);
+        const match = line.match(/URI="([^"]+)"/);
+        if (!match) return line;
+        const proxiedUri = await proxied(match[1]);
+        return line.replace(/URI="([^"]+)"/, `URI="${proxiedUri}"`);
       }
       if (!line || line.startsWith('#')) return line;
       return proxied(line.trim());
     })
-    .join('\n');
+  );
+  return rewrittenLines.join('\n');
 }

@@ -1,6 +1,6 @@
 import { decryptStreamToken, hashForToken } from './streamToken';
 import {
-  decodeProxyTarget,
+  decryptProxyTarget,
   isSafeProxyTarget,
   looksLikePlaylist,
   m3u8FetchHeaders,
@@ -246,7 +246,7 @@ export default {
     // request (`u=<encoded>`) plays whatever absolute URL that
     // sub-resource resolved to. Same shape as hls-proxy's `u` param.
     const uParam = url.searchParams.get('u');
-    const targetUrl = uParam ? decodeProxyTarget(uParam) : payload.sr;
+    const targetUrl = uParam ? await decryptProxyTarget(uParam, env.STREAM_TOKEN_SECRET) : payload.sr;
     if (!targetUrl) return jsonError('Bad request.', 400);
     if (!isSafeProxyTarget(targetUrl)) return jsonError('Bad request.', 400);
 
@@ -314,7 +314,13 @@ export default {
       // whichever one viewer's token happened to trigger the cache
       // miss: every other viewer's xhrSetup overwrites it with their
       // own token before the request actually goes out.
-      const rewritten = rewritePlaylist(text, targetUrl, proxyBase, `t=${encodeURIComponent(token)}`);
+      const rewritten = await rewritePlaylist(
+        text,
+        targetUrl,
+        proxyBase,
+        `t=${encodeURIComponent(token)}`,
+        env.STREAM_TOKEN_SECRET
+      );
       if (cacheKey) {
         ctx.waitUntil(
           cache.put(
