@@ -71,15 +71,28 @@ export async function POST(request: NextRequest) {
     'pending'
   );
 
+  // burst_fetch stops HERE, always — see worker/src/index.ts's own
+  // comment on why: this app's hls.js buffer settings make a burst of
+  // rapid segment requests completely normal at playback start and
+  // after every seek, which made the repeat-count check below
+  // indistinguishable from an actual bulk downloader in practice and
+  // cost real students their playback. Still logged above (SUSPICIOUS_
+  // SECURITY_EVENT, visible in app/admin/security) for a human to weigh
+  // alongside whatever else an account has triggered — just never
+  // enough, alone or repeated, to auto-block by itself anymore.
+  if (parsed.data.reason === 'burst_fetch') {
+    return NextResponse.json({ ok: true, logged: true });
+  }
+
   const attemptNumber = await countSecurityIncidents(user.id);
 
   // Unlike a DevTools detection (an intentional user action — see
   // app/api/security/incident/route.ts, which blocks on the very first
-  // one), a single ip_mismatch/burst_fetch report is deliberately NOT
-  // enough to auto-block by itself: a phone genuinely hopping from wifi
-  // to mobile data mid-playback can legitimately trip ip_mismatch once
-  // (its currently-in-flight token was minted for the old IP; the NEXT
-  // refresh, ~10s later, mints a fresh one for the new IP and succeeds —
+  // one), a single ip_mismatch report is deliberately NOT enough to
+  // auto-block by itself: a phone genuinely hopping from wifi to mobile
+  // data mid-playback can legitimately trip it once (its
+  // currently-in-flight token was minted for the old IP; the NEXT
+  // refresh, ~8s later, mints a fresh one for the new IP and succeeds —
   // see STREAM_TOKEN_REFRESH_MS in components/VideoPlayer.tsx) and that
   // is not the same thing as someone else playing a copied link. Only
   // REPEATED reports for this account within a short window — the
@@ -87,8 +100,15 @@ export async function POST(request: NextRequest) {
   // getting used from the wrong place over and over — cross the line
   // into "block it". A confirmed real leak still gets caught fast: this
   // window is minutes, not the 24h block duration itself.
+  //
+  // bot_signature gets its own, much stricter threshold: see the check
+  // itself in worker/src/index.ts for why it has essentially no
+  // legitimate-user false-positive path (an empty User-Agent or a known
+  // scripting-tool signature; Accept-Language was deliberately dropped
+  // from this check after it turned out some legitimate WebViews omit
+  // it) — one report is already enough.
   const REPEAT_WINDOW_MINUTES = 10;
-  const REPEAT_THRESHOLD = 3;
+  const REPEAT_THRESHOLD = parsed.data.reason === 'bot_signature' ? 1 : 3;
   const windowStart = new Date(Date.now() - REPEAT_WINDOW_MINUTES * 60_000).toISOString();
   const { count: recentCount } = await adminClient
     .from('audit_logs')
@@ -101,9 +121,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, watching: true, recentCount: recentCount ?? 1 });
   }
 
-  const label = parsed.data.reason === 'ip_mismatch'
-    ? 'a stream link repeatedly used from a different network than it was issued to'
-    : 'a stream link repeatedly pulling video data far faster than normal playback';
+  const label =
+    parsed.data.reason === 'ip_mismatch'
+      ? 'a stream link repeatedly used from a different network than it was issued to'
+      : 'a stream request from a non-browser client (missing/automated User-Agent)';
 
   const { blockedUntil, blockReason } = await maybeAutoBlockAccount(
     user,

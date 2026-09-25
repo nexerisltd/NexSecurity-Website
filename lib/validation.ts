@@ -243,6 +243,11 @@ export const pushSubscriptionSchema = z.object({
 // a different account or device.
 export const securityIncidentSchema = z.object({
   detectionType: z.enum(['DEVTOOLS_DETECTED', 'SUSPICIOUS_SECURITY_EVENT']).default('DEVTOOLS_DETECTED'),
+  // Which of DevToolsGuard.tsx's two independent signals fired —
+  // 'docked_window' (desktop-only) or 'debugger_timing' (also works on
+  // mobile/remote-debugging). Purely informational, for whoever reviews
+  // app/admin/security/page.tsx to tell the two apart at a glance.
+  signal: z.enum(['docked_window', 'debugger_timing']).optional(),
   screen_width: z.number().int().min(0).max(20000).optional(),
   screen_height: z.number().int().min(0).max(20000).optional(),
   viewport_width: z.number().int().min(0).max(20000).optional(),
@@ -261,7 +266,7 @@ export const reviewStatusUpdateSchema = z.object({
 // this route over the open internet (gated by a shared-secret header
 // instead of a user session — see that route).
 export const tokenMismatchReportSchema = z.object({
-  reason: z.enum(['ip_mismatch', 'burst_fetch']),
+  reason: z.enum(['ip_mismatch', 'burst_fetch', 'bot_signature']),
   aid: z.string().uuid(),
   videoId: z.string().uuid(),
   uid: z.string().min(1).max(64),

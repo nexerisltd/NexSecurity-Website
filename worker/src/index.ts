@@ -41,6 +41,15 @@ const RATE_LIMIT_WINDOW_SECONDS = 60;
 const BURST_LIMIT = 40;
 const BURST_WINDOW_SECONDS = 5;
 
+// Known non-browser HTTP client / downloader-tool signatures. Not
+// exhaustive — nothing like this can be — but catches the default,
+// un-spoofed User-Agent of virtually every off-the-shelf scripting
+// library and CLI tool, which is what most automated downloaders
+// actually send unless someone specifically bothered to fake a browser
+// UA. See the request-signature check in the fetch handler below.
+const SUSPICIOUS_UA_RE =
+  /curl|wget|python-requests|python-urllib|aiohttp|okhttp|Go-http-client|libwww-perl|scrapy|axios\/|node-fetch|PostmanRuntime|HTTPie|powershell|^Java\/|Apache-HttpClient|libcurl|^Bun\/|^Deno\/|got \(|undici|yt-dlp|youtube-dl|ffmpeg/i;
+
 // hls.js ব্রাউজার থেকে সরাসরি এই Worker-কে (আলাদা origin/domain) call
 // করে, তাই CORS header ছাড়া ব্রাউজার response-টা silently reject করে
 // দেয় — token-ই এখানে আসল security gate, তাই origin খোলা রাখাটা কোনো
@@ -111,6 +120,9 @@ function jsonError(message: string, status: number): Response {
  *   - 'burst_fetch': the SAME token is being used to pull segments far
  *     faster than real playback ever would (see BURST_LIMIT below) —
  *     consistent with a bulk downloader, not a video player.
+ *   - 'bot_signature': the request's own headers (User-Agent,
+ *     Accept-Language) don't look like they came from a real browser —
+ *     see the check in the fetch handler below.
  * Either POSTs to app/api/security/token-mismatch/route.ts, which is
  * what actually drives the auto-block in
  * app/api/security/incident/route.ts's shared logic. Deliberately
@@ -122,7 +134,7 @@ function jsonError(message: string, status: number): Response {
 function reportSuspiciousActivity(
   env: Env,
   ctx: ExecutionContext,
-  reason: 'ip_mismatch' | 'burst_fetch',
+  reason: 'ip_mismatch' | 'burst_fetch' | 'bot_signature',
   payload: { aid: string; vid: string; uid: string },
   requestIp: string
 ): void {
@@ -209,19 +221,52 @@ export default {
       return jsonError('Access denied.', 403);
     }
 
+    // Non-browser client signature: a standalone script — curl,
+    // python-requests, yt-dlp's default UA, an HTTP client library's
+    // default — either sends no User-Agent at all or one that names the
+    // tool outright, unless it goes out of its way to impersonate a
+    // browser. Blocked outright (not just reported like burst_fetch
+    // below) because this specific check — an empty UA or a known
+    // tool/library signature — has essentially no legitimate-browser
+    // false-positive path.
+    //
+    // Deliberately NOT also checking Accept-Language, even though a real
+    // desktop/mobile Chrome/Firefox/Safari always sends it: some Android
+    // WebViews (this site's own TWA/PWA wrapper included, depending on
+    // OS/WebView version) and some privacy-hardened browser configs omit
+    // or strip it for anti-fingerprinting reasons, on completely
+    // legitimate traffic. That's real users, not bots — blocking on its
+    // absence alone risked exactly the "randomly stops playing"
+    // complaint this was meant to prevent, not catch. A sophisticated
+    // bot fully impersonating a browser's UA defeats this check the same
+    // way it could evade burst pacing below — this raises the floor, it
+    // doesn't claim to catch everyone.
+    const requestUa = request.headers.get('user-agent') ?? '';
+    if (!requestUa || SUSPICIOUS_UA_RE.test(requestUa)) {
+      reportSuspiciousActivity(env, ctx, 'bot_signature', payload, requestIp);
+      return jsonError('Access denied.', 403);
+    }
+
     const allowed = checkRateLimit(payload.uid, RATE_LIMIT, RATE_LIMIT_WINDOW_SECONDS);
     if (!allowed) return jsonError('Too many requests.', 429);
 
-    // Burst-abuse signal: a real player fetches segments roughly in
-    // playback order, a handful at a time as the buffer needs them. A
-    // bulk downloader (grabbing every segment as fast as possible to
-    // reassemble the whole video offline) blows way past that inside a
-    // few seconds while staying comfortably under RATE_LIMIT's 240/60s
-    // budget. This doesn't block the request — the token is still valid
-    // and the viewer might just be seeking around — it only reports,
-    // same fire-and-forget path as the IP mismatch above, so a human
-    // (or the existing incident-count auto-block) can weigh it alongside
-    // whatever else that account has triggered.
+    // Burst-abuse SIGNAL, not enforcement — this only ever reports (see
+    // app/api/security/token-mismatch/route.ts, which deliberately never
+    // escalates 'burst_fetch' reports into an auto-block on its own,
+    // for admin visibility only). It used to also feed the same
+    // repeat-count auto-block ip_mismatch/bot_signature do, until real
+    // playback showed why that was wrong: this app's own hls.js buffer
+    // settings (maxBufferLength: 60s in components/VideoPlayer.tsx)
+    // mean a normal player legitimately fetches a burst of segments
+    // back-to-back at playback start AND after every seek/rewind, to
+    // refill that buffer as fast as the connection allows — completely
+    // ordinary behavior that BURST_LIMIT below was never loose enough
+    // to distinguish from an actual bulk downloader. Rather than tune a
+    // threshold that has to somehow tell "seeking around a lecture" and
+    // "scripted bulk download" apart from request timing alone, this
+    // stays a data point for a human reviewing app/admin/security, not
+    // an automatic trigger — the IP-binding and bot-signature checks
+    // above are what actually enforce.
     if (!checkRateLimit(`burst:${payload.uid}`, BURST_LIMIT, BURST_WINDOW_SECONDS)) {
       reportSuspiciousActivity(env, ctx, 'burst_fetch', payload, requestIp);
     }

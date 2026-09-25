@@ -41,7 +41,7 @@ const ACTIVE_SESSION_WINDOW_SECONDS = 30;
 // worker/src/index.ts): TTL is now defense-in-depth on top of that check,
 // not the only thing standing between a copied URL and a stranger's
 // browser, so it no longer needs to carry the whole burden alone.
-const TOKEN_TTL_SECONDS = 25;
+const TOKEN_TTL_SECONDS = 20;
 
 /**
  * Mints a short-lived, ENCRYPTED token the Cloudflare Worker
