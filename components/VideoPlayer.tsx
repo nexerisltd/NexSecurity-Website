@@ -355,6 +355,15 @@ export function VideoPlayer({
   const touchHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchHoldingFastRef = useRef(false);
   const suppressNextVideoClickRef = useRef(false);
+  // Left/right double-tap-to-seek (mirrors the familiar YouTube gesture)
+  // — see handleVideoZoneClick below. zoneTapRef tracks which side is
+  // mid-sequence and how many taps have landed on it so far; zoneTapTimerRef
+  // is the "no further tap arrived in time" window that either falls back
+  // to a normal play/pause (after just one tap) or ends the accumulating
+  // seek sequence (after two or more).
+  const zoneTapRef = useRef<{ side: 'left' | 'right' | null; count: number }>({ side: null, count: 0 });
+  const zoneTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const zoneSeekAccumRef = useRef(0);
 
   // --- "Resume playback": last watched position for this (user, video),
   // read either from the server-rendered page (initialResumeSeconds) or
@@ -1271,10 +1280,10 @@ export function VideoPlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHls, url]);
 
-  function showHint(text: string) {
+  function showHint(text: string, durationMs = 650) {
     setHint(text);
     if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
-    hintTimerRef.current = setTimeout(() => setHint(null), 650);
+    hintTimerRef.current = setTimeout(() => setHint(null), durationMs);
   }
 
   function seek(deltaSeconds: number) {
@@ -1407,12 +1416,62 @@ export function VideoPlayer({
     }
   }
 
-  function handleVideoClick() {
+  // How long to wait, after a tap on the left/right half, to see whether
+  // a second one follows on the SAME side before deciding what the tap
+  // meant — short enough that a deliberate double-tap still feels
+  // instant, long enough that two genuine taps of a real double-tap
+  // gesture reliably land inside it. A single tap that never gets a
+  // follow-up (this window elapsing with count still 1) falls back to
+  // the ordinary play/pause toggle, same as tapping anywhere else on the
+  // frame always has.
+  const ZONE_TAP_WINDOW_MS = 380;
+
+  function handleVideoZoneClick(e: React.MouseEvent) {
     if (suppressNextVideoClickRef.current) {
       suppressNextVideoClickRef.current = false;
       return;
     }
-    togglePlayPause();
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const side: 'left' | 'right' = e.clientX - rect.left > rect.width / 2 ? 'right' : 'left';
+
+    if (zoneTapTimerRef.current) clearTimeout(zoneTapTimerRef.current);
+
+    if (zoneTapRef.current.side === side) {
+      zoneTapRef.current.count += 1;
+    } else {
+      // Switching sides (or starting fresh) always restarts the count —
+      // a tap on the opposite half is never "continuing" a sequence, YT
+      // does the same thing.
+      zoneTapRef.current = { side, count: 1 };
+      zoneSeekAccumRef.current = 0;
+    }
+
+    if (zoneTapRef.current.count === 1) {
+      // Just one tap so far — could still turn into a double-tap, so
+      // don't act yet. If nothing else arrives in time, this is what
+      // makes a normal single tap still toggle play/pause exactly like
+      // before this feature existed.
+      zoneTapTimerRef.current = setTimeout(() => {
+        zoneTapRef.current = { side: null, count: 0 };
+        togglePlayPause();
+      }, ZONE_TAP_WINDOW_MS);
+      return;
+    }
+
+    // Second (or third, fourth, ...) tap on the same side within the
+    // window — this is the actual seek gesture. Each repeat both moves
+    // playback by SEEK_SECONDS immediately (so it never feels laggy) and
+    // grows the on-screen total, then re-arms the window so a quick
+    // flurry of taps keeps extending rather than resetting mid-flurry.
+    seek(side === 'right' ? SEEK_SECONDS : -SEEK_SECONDS);
+    zoneSeekAccumRef.current += SEEK_SECONDS;
+    showHint(side === 'right' ? `▶▶ ${zoneSeekAccumRef.current}s` : `◀◀ ${zoneSeekAccumRef.current}s`, 800);
+
+    zoneTapTimerRef.current = setTimeout(() => {
+      zoneTapRef.current = { side: null, count: 0 };
+      zoneSeekAccumRef.current = 0;
+    }, ZONE_TAP_WINDOW_MS);
   }
 
   // Close the settings menu on any click outside it (mirrors the pattern
@@ -1636,6 +1695,7 @@ export function VideoPlayer({
       if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
       if (touchHoldTimerRef.current) clearTimeout(touchHoldTimerRef.current);
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+      if (zoneTapTimerRef.current) clearTimeout(zoneTapTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isYoutube, isNativeVideo]);
@@ -1715,13 +1775,15 @@ export function VideoPlayer({
         <>
           {/* Press-and-hold anywhere on the frame jumps to 2× (see
               handleVideoPointerDown); a normal tap/click still toggles
-              play/pause via handleVideoClick. */}
+              play/pause, and a quick double-tap/double-click on the
+              left or right half seeks -10s/+10s, both via
+              handleVideoZoneClick. */}
           {isYoutube ? (
             // YT.Player takes this div over and injects its own iframe —
             // no other React children ever go inside it.
             <div
               className="absolute inset-0"
-              onClick={handleVideoClick}
+              onClick={handleVideoZoneClick}
               onPointerDown={handleVideoPointerDown}
               onPointerUp={endVideoHold}
               onPointerCancel={endVideoHold}
@@ -1748,7 +1810,7 @@ export function VideoPlayer({
               preload="metadata"
               controlsList="nodownload"
               className="h-full w-full bg-black object-contain"
-              onClick={handleVideoClick}
+              onClick={handleVideoZoneClick}
               onPointerDown={handleVideoPointerDown}
               onPointerUp={endVideoHold}
               onPointerCancel={endVideoHold}
